@@ -147,3 +147,26 @@ these are the design gaps to state in the paper:
 - Mention matching is lexical, so common words authorize reads.
 - Database content is unclassified.
 - Risk and history are per session; an attack split across sessions is not modelled at all.
+
+## F8: LlamaFirewall baseline (local scanners only)
+
+LlamaFirewall 1.0.3 installed in `.venv-lf` (CPU PyTorch). Run the bench with
+`.venv-lf/Scripts/python -m bench.run` to include the row `llamafirewall_local_scanners`; the normal
+environment and CI skip it.
+
+What was run: REGEX and HIDDEN_ASCII scanners with default settings. Each proposed tool call is scanned
+as an assistant message `tool({args})`; for reads, the file content is scanned as a tool output.
+This adaptation is my assumption about how to put a message scanner in front of tool calls.
+
+What was NOT run, so this is not a verdict on LlamaFirewall as a whole:
+- PROMPT_GUARD: gated Hugging Face model; no token or license acceptance on this machine yet.
+- AGENT_ALIGNMENT: needs an external LLM API.
+- CODE_SHIELD: needs semgrep-core, which is unavailable on Windows.
+- The benchmark episodes contain no injected text, so the injection scanners would have had little
+  to detect even if enabled. This favours neither system but limits what the comparison can say.
+
+Observed (all sets, ASR 71.7% to 84.6%, benign blocked 0% to 17.4%): the default REGEX pattern flags
+email addresses, so legitimate emails to approved destinations are blocked (about 10 to 13% of benign
+steps on generated sets). p50 latency 1.9 to 6.7 ms per action versus about 0.02 ms for IntentGuard's
+rules. Interpret as "a content scanner with default patterns does not address authorization", not as
+LlamaFirewall being ineffective at prompt-injection detection.

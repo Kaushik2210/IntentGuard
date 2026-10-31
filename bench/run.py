@@ -109,7 +109,7 @@ def report(label: str, episodes, out: Path, commit: str) -> str:
                      f"({pct(s['fpr_ci'][0])}-{pct(s['fpr_ci'][1])}) | {pct(s['review_friction'])} "
                      f"| {pct(s['precision'])} | {pct(s['exfil_rate'])} | {pct(s['task_completion'])} "
                      f"| {s['latency_p50_ms']:.3f} / {s['latency_p95_ms']:.3f} |")
-    lines.append("| external_guardrail | TO MEASURE | TO MEASURE | TO MEASURE | TO MEASURE | TO MEASURE "
+    lines.append("| llamafirewall_full (PromptGuard + AlignmentCheck) | TO MEASURE | TO MEASURE | TO MEASURE | TO MEASURE | TO MEASURE "
                  "| TO MEASURE | TO MEASURE | TO MEASURE |")
     return "\n".join(lines) + "\n"
 

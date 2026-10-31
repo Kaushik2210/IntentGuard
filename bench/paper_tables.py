@@ -9,7 +9,8 @@ import json
 from pathlib import Path
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
-MAIN = ["unprotected", "static_rbac", "keyword_guardrail_standin", "intentguard_full"]
+MAIN = ["unprotected", "static_rbac", "keyword_guardrail_standin",
+        "llamafirewall_local_scanners", "intentguard_full"]
 ABLATE = ["intentguard_full", "ablate_no_mention_check", "ablate_no_intent",
           "ablate_no_behaviour", "ablate_no_dataflow"]
 
@@ -25,6 +26,8 @@ def table(label: str, systems: list[str], cols: list[tuple[str, str]]) -> str:
            "| System | " + " | ".join(c[0] for c in cols) + " |",
            "|---|" + "---|" * len(cols)]
     for s in systems:
+        if s not in d["summary"]:
+            continue  # optional baseline not run in this environment
         row = d["summary"][s]
         out.append(f"| {s} | " + " | ".join(pct(row[k]) for _, k in cols) + " |")
     return "\n".join(out) + "\n"
