@@ -30,7 +30,7 @@ def test_review_flow_and_audit_verify():
                                           "args": {"to": "other@x.org", "body": "hi"}}).json()
     aid = r["decision"]["action_id"]
     assert r["decision"]["decision"] == "REVIEW"
-    assert [d["action_id"] for d in c.get("/pending").json()] == [aid]
+    assert [e["decision"]["action_id"] for e in c.get("/pending").json()] == [aid]
     assert c.post(f"/pending/{aid}/approve", json={"approver": "kaushik"}).status_code == 200
     assert c.get("/pending").json() == []
     assert c.get("/audit/verify").json() == {"ok": True, "first_bad_seq": None}
@@ -41,3 +41,11 @@ def test_errors():
     assert c.post("/sessions/nope/call", json={"tool": "x"}).status_code == 404
     assert c.post("/sessions", json={"session_id": "s1", "agent_id": "a", "task": "t"}).status_code == 409
     assert c.post("/pending/zzz/approve", json={"approver": "k"}).status_code == 404
+
+
+def test_events_and_seed():
+    c = TestClient(demo_app())
+    assert c.post("/demo/seed").json()["seeded"] == 3
+    ev = c.get("/events?limit=5").json()
+    assert len(ev) == 5 and ev[0]["ts"] >= ev[-1]["ts"]
+    assert c.get("/stats").json()["inspected"] == 12
