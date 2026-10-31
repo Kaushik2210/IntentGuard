@@ -1,0 +1,16 @@
+# UNTESTED (no Docker on the dev machine yet). Intent: the agent container sits on an internal
+# network with no route to the internet and can reach only the gateway. Tools live in the gateway
+# container. Verify with `docker compose exec agent curl -m 3 https://example.com` (must fail).
+services:
+  gateway:
+    build: {context: .., dockerfile: docker/Dockerfile}
+    command: uvicorn intentguard.service.app:demo_app --factory --host 0.0.0.0 --port 8000
+    networks: [agent_net]
+  agent:
+    image: python:3.12-slim
+    volumes: ["../agents:/agents:ro"]
+    command: sleep infinity
+    networks: [agent_net]
+networks:
+  agent_net:
+    internal: true
