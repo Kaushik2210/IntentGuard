@@ -38,6 +38,7 @@ RULE_TEXT = {
     "SCOPE-001": "The resource is outside what your task authorized",
     "SCOPE-002": "The operation is not part of what your task authorized",
     "SCOPE-003": "The data is classified above the level your task allows",
+    "SCOPE-005": "Sensitive file is not referenced by your task",
     "SCOPE-004": "Task intent was unclear and this touches sensitive data",
     "EGRESS-001": "The destination is not on the approved list",
     "EGRESS-002": "Confidential data seen in this session would leave to an unapproved destination",
@@ -61,6 +62,16 @@ class EngineConfig:
                      (0.8, "db_needs_review"))
     quarantine_at: float = 1.0
     low_confidence: float = 0.6
+    mention_check: bool = True  # CONFIDENTIAL+ reads must be referenced by the task text
+
+
+def _mentioned(resource: str, task: str) -> bool:
+    t = task.lower()
+    if resource.lower() in t:
+        return True
+    toks = {x for x in re.split(r"[^a-z0-9]+", t) if x}
+    stems = re.split(r"[^a-z0-9]+", resource.lower().rsplit("/", 1)[-1])
+    return any(len(s) >= 3 and s in toks for s in stems)
 
 
 class PolicyEngine:
@@ -124,6 +135,10 @@ class PolicyEngine:
                      sc.max_classification.name)
             if sc.confidence < cfg.low_confidence and req.classification >= Classification.CONFIDENTIAL:
                 fire("SCOPE-004", Verdict.REVIEW, 0.05, f"confidence={sc.confidence}")
+            if (cfg.mention_check and req.op == Op.READ and req.resource
+                    and req.classification >= Classification.CONFIDENTIAL
+                    and not _mentioned(req.resource, sc.task_text)):
+                fire("SCOPE-005", Verdict.REVIEW, 0.2, req.resource, "named in the task")
 
         # destination trust + data flow
         if req.destination and is_egress:

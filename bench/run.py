@@ -121,7 +121,8 @@ def main() -> None:
     md = "# IntentGuardBench results\n\n" + "\n".join(
         report(label, eps, out, commit) for label, eps in (("core", build()), ("seq", build_seq()),
                          ("gen_dev_seed1", generate(1, 150)),
-                         ("gen_heldout_seed2026", generate(2026, 300))))
+                         ("gen_heldout_seed2026", generate(2026, 300)),
+                         ("gen_fresh_seed4242", generate(4242, 300))))
     (out / "results.md").write_text(md)
     print(md)
 

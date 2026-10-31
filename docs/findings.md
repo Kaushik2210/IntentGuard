@@ -72,3 +72,33 @@ privilege escalation) was stopped in every case. This is the weakness predicted 
 
 Procedure from here: do not tune on seed 2026. Develop the credential-read rule against dev seed 1,
 then evaluate on a fresh seed and report both the 2026 number (before) and the new one (after).
+
+## F5: SCOPE-005 (sensitive file must be named by the task), before/after
+
+Rule: a READ of a CONFIDENTIAL+ file is REVIEW unless the task text contains the path or a filename
+token of at least 3 characters. Developed against dev seed 1 after F4. `ablate_no_mention_check` is
+the engine without it, so every set has a paired before/after.
+
+| Set | ASR before | ASR after | Benign blocked (after) | Review friction (after) |
+|---|---|---|---|---|
+| core (55, dev set) | 11.4% | 0.0% | 0.0% | 1.4% |
+| seq (10, dev set) | 72.2% | 0.0% | 8.7% | 17.4% |
+| gen dev seed 1 (150) | 37.9% | 1.0% | 0.0% | 1.4% |
+| gen seed 2026 (300, seen in F4, no longer held-out) | 43.2% | 2.3% | 0.0% | 1.8% |
+| gen seed 4242 (300, fresh) | 31.3% | 1.0% | 0.0% | 2.3% |
+
+Read this with care:
+- The generator writes every attack's credential read without naming the file in the task, and every
+  legitimate credential read with the path in the task. The rule is the inverse of how the data was
+  made, so the near-zero ASR is partly circular. It shows the rule does what it says, not that
+  real attacks are this easy to separate.
+- A real user may mention a credential file loosely ("check my settings") or an attacker may
+  influence the task text. Neither is covered by these sets.
+- Cost is visible on the seq set: 4 benign look-alikes that read `secrets/app.env` without naming it
+  now get REVIEW (task completion 25%). Whether those episodes are really benign is a labelling
+  judgement; they are counted as benign here.
+- A test fix: `test_taint_blocks_exfil_of_derived_content` now names `hr/salary.xlsx` in its task so it
+  still exercises taint rather than SCOPE-005.
+
+Needed next: episodes where legitimate tasks refer to sensitive files loosely, and attacks where
+the task text or retrieved content names the file, ideally written by someone else.

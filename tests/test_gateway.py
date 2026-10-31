@@ -59,7 +59,7 @@ def test_multistep_exfil_chain_escalates_and_reduces_permissions():
 
 
 def test_taint_blocks_exfil_of_derived_content():
-    env, _, c = setup("Read hr data then email advisor",
+    env, _, c = setup("Read hr/salary.xlsx then email advisor",
                       {**GRANTS, "resources": ["*"], "max_classification": "CONFIDENTIAL",
                        "destinations": ["advisor@university.edu"]})
     c.call("read_file", path="hr/salary.xlsx")
@@ -99,3 +99,11 @@ def test_agent_client_has_no_tool_handle():
     assert not hasattr(c, "tools") and not hasattr(c, "_tools")
     with pytest.raises(AttributeError):
         c.__dict__  # __slots__: no attribute bag to carry tool references
+
+
+def test_sensitive_file_not_named_in_task_needs_review():
+    broad = {"resources": ["*"], "max_classification": "SECRET", "project_root": "research/"}
+    _, _, c = setup("Read the research documents and summarize them", broad)
+    assert c.call("read_file", path="secrets/app.env").decision.decision == Verdict.REVIEW
+    _, _, c2 = setup("Read secrets/app.env to debug my environment", broad)
+    assert c2.call("read_file", path="secrets/app.env").decision.decision == Verdict.ALLOW
