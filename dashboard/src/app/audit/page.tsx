@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Btn, ErrorBar, Panel } from "@/components/ui";
-import { API, usePoll } from "@/lib/api";
+import { API, authHeaders, usePoll } from "@/lib/api";
 
 interface Entry {
   seq: number;
@@ -18,7 +18,7 @@ export default function Audit() {
   const { data, error } = usePoll<{ total: number; entries: Entry[] }>(`/audit?offset=${page * PAGE}&limit=${PAGE}`, 4000);
   const pages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE));
   const check = async () => {
-    const r = await (await fetch(`${API}/audit/verify`)).json();
+    const r = await (await fetch(`${API}/audit/verify`, { headers: authHeaders() })).json();
     setVerify(r.ok ? "Chain intact: no entry has been edited, reordered or removed." : `Chain broken at entry ${r.first_bad_seq}.`);
   };
   return (

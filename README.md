@@ -12,20 +12,20 @@ pip install -e .[dev]
 pytest
 ```
 
-## Status (v0.1, core only)
+## Status (research prototype)
 
-Implemented: TaskScope compiler (template), policy engine with ablation flags, taint/egress rules,
-multi-step rules SEQ-001/002/004, dynamic permission ladder, approval queue, audit chain, mock env.
+Implemented: deterministic policy engine (scope, taint/egress, sequence risk, injection-aware output
+scan, dynamic permission reduction), hash-chained audit log, approval queue, FastAPI service with
+agent/admin bearer tokens, Next.js dashboard, HTTP-only agent process, IntentGuardBench (hand-written,
+seeded-generated and adversarial sets, ablations, baselines incl. LlamaFirewall local scanners).
 
-Also implemented: IntentGuardBench v0 (`python -m bench.run`, 55 scripted episodes, unprotected /
-static RBAC / IntentGuard / ablations), a FastAPI service, and a Next.js dashboard.
+Not done: published-guardrail comparison with PromptGuard/AlignmentCheck, LLM-driven agent runs,
+independent (non-author) episode set, verified network-level isolation (Docker draft untested), OPA
+backend, Postgres/Redis, cross-session risk, DB result classification.
 
-Not yet: external guardrail baseline, independent held-out episode set, OPA backend, LangGraph agent,
-Postgres/Redis, service authentication, process-level isolation (the in-process `GatewayClient` only
-shows the API shape; real enforcement needs the agent and tools in separate processes/containers).
-
-Benchmark numbers are preliminary: episodes were written by the same author as the engine. Do not
-quote them as evidence of effectiveness until an independent set and a real baseline exist.
+Read `docs/findings.md` before quoting any number: results are preliminary, same-author benchmarks,
+and several weaknesses are documented there (F2, F5 to F9). `python -m bench.run` regenerates them;
+run it with `.venv-lf/Scripts/python` to include the LlamaFirewall row.
 
 ## Dashboard (demo)
 
@@ -35,5 +35,9 @@ uvicorn intentguard.service.app:demo_app --factory --port 8000
 cd dashboard; npm install; npm run dev     # http://localhost:3000
 ```
 
-Click "Load sample scenarios" on the Overview page to replay synthetic scenarios. The service has
-no authentication or persistence; it is a local demo only.
+Click "Load sample scenarios" on the Overview page to replay synthetic scenarios. With no tokens set
+the service is open and keeps sessions in memory; it is a local demo only.
+
+Auth: set `INTENTGUARD_AGENT_TOKEN` and `INTENTGUARD_ADMIN_TOKEN` on the service (and
+`NEXT_PUBLIC_ADMIN_TOKEN` for the dashboard, local demo only). `INTENTGUARD_AUDIT_FILE` persists the
+audit chain.

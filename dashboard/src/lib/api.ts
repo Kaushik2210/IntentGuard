@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 
 export const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
 
+// Local demo only: NEXT_PUBLIC_* values are visible in the browser bundle. Do not use a real secret.
+const TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN;
+export const authHeaders = (): Record<string, string> => (TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {});
+
 export type Verdict = "ALLOW" | "REVIEW" | "BLOCK" | "QUARANTINE";
 
 export interface Evidence {
@@ -44,7 +48,7 @@ export interface Stats {
 export async function post(path: string, body?: unknown) {
   const r = await fetch(`${API}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!r.ok) throw new Error(`${r.status}`);
@@ -57,7 +61,7 @@ export function usePoll<T>(path: string, ms = 2000) {
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`${API}${path}`, { cache: "no-store" });
+      const r = await fetch(`${API}${path}`, { cache: "no-store", headers: authHeaders() });
       if (!r.ok) throw new Error(`${r.status}`);
       setData(await r.json());
       setError(null);
