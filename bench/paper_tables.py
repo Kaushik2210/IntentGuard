@@ -38,7 +38,8 @@ def main() -> None:
             ("Review friction %", "review_friction"), ("Task completion %", "task_completion")]
     print("# Generated tables (do not edit by hand)\n")
     print("## Main comparison\n")
-    for label in ("gen_fresh_seed4242", "gen_heldout_seed2026", "adversarial"):
+    for label in ("gen_fresh_seed4242", "gen_heldout_seed2026", "adversarial", "adversarial2",
+                  "injection_text"):
         print(table(label, MAIN, cols))
     print("## Ablations\n")
     for label in ("gen_fresh_seed4242", "gen_heldout_seed2026"):

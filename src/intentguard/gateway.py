@@ -103,7 +103,7 @@ class Gateway:
                          f"engine error: {exc!r}", "block", s.caps)
         self._log(req, d)
         if d.decision == Verdict.ALLOW:
-            return Result(d, tool.fn(**args))
+            return Result(d, self._run(s, tool, args))
         if d.decision == Verdict.REVIEW:
             self.pending[req.action_id] = (s, tool, args)
         return Result(d)
@@ -111,11 +111,19 @@ class Gateway:
     def approve(self, action_id: str, approver: str) -> Any:
         s, tool, args = self.pending.pop(action_id)
         self.audit.append({"event": "approved", "action": action_id, "by": approver})
-        return tool.fn(**args)
+        return self._run(s, tool, args)
 
     def reject(self, action_id: str, approver: str) -> None:
         self.pending.pop(action_id)
         self.audit.append({"event": "rejected", "action": action_id, "by": approver})
+
+    def _run(self, s: Session, tool: Tool, args: dict) -> Any:
+        out = tool.fn(**args)
+        observe = getattr(self.engine, "observe", None)
+        if observe and observe(s, out):
+            self.audit.append({"event": "injection_flag", "session": s.session_id, "tool": tool.name,
+                               "risk": round(s.risk, 3)})
+        return out
 
     def _log(self, req: ActionRequest, d: Decision) -> None:
         self.audit.append({

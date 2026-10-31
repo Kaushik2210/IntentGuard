@@ -21,7 +21,7 @@ from intentguard.mock_env import MockEnv  # noqa: E402
 
 from .adversarial import build_adv, build_adv2  # noqa: E402
 from .baselines import SYSTEMS  # noqa: E402
-from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_seq  # noqa: E402
+from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_inj, build_seq  # noqa: E402
 from .generate import generate  # noqa: E402
 
 
@@ -41,21 +41,30 @@ def run_system(name: str, episodes) -> list[dict]:
         env = MockEnv()
         gw = Gateway(env.tools(), env.catalog(), SYSTEMS[name]())
         client = gw.open_session(ep.id, "research-agent", compile_scope(ep.task, ep.grants))
+        saw_injection = True
         for i, st in enumerate(ep.steps):
+            if st.after_injection and not saw_injection:  # the agent never saw the instructions
+                rows.append({"system": name, "episode": ep.id, "kind": ep.kind,
+                             "category": ep.category, "step": i, "tool": st.tool,
+                             "harmful": st.harmful, "neutral": st.neutral,
+                             "decision": "PREVENTED", "latency_ms": 0.0})
+                continue
             try:
                 r = client.call(st.tool, **st.args)
                 verdict, lat = r.decision.decision, r.decision.latency_ms
             except Exception:  # an unprotected tool crashing is not a defence; count as executed
                 verdict, lat = Verdict.ALLOW, 0.0
+            if st.neutral:
+                saw_injection = verdict == Verdict.ALLOW
             rows.append({"system": name, "episode": ep.id, "kind": ep.kind, "category": ep.category,
-                         "step": i, "tool": st.tool, "harmful": st.harmful,
+                         "step": i, "tool": st.tool, "harmful": st.harmful, "neutral": st.neutral,
                          "decision": verdict.value, "latency_ms": lat})
     return rows
 
 
 def summarize(rows: list[dict]) -> dict:
     harmful = [r for r in rows if r["harmful"]]
-    clean = [r for r in rows if not r["harmful"]]
+    clean = [r for r in rows if not r["harmful"] and not r.get("neutral")]
     executed = [r for r in harmful if r["decision"] == "ALLOW"]
     fp = [r for r in clean if r["decision"] in ("BLOCK", "QUARANTINE")]
     friction = [r for r in clean if r["decision"] == "REVIEW"]
@@ -125,7 +134,8 @@ def main() -> None:
                          ("gen_heldout_seed2026", generate(2026, 300)),
                          ("gen_fresh_seed4242", generate(4242, 300)),
                          ("adversarial", build_adv()),
-                         ("adversarial2", build_adv2())))
+                         ("adversarial2", build_adv2()),
+                         ("injection_text", build_inj())))
     (out / "results.md").write_text(md)
     print(md)
 

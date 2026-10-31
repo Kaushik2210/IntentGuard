@@ -28,6 +28,10 @@ SECRET_RE = re.compile(
     r"|(?i:api[_-]?key|secret|password|token)\s*[=:]\s*\S{6,})")
 ENV_PATTERNS = ["*.env", "*.env.*", "*config*", "*credentials*", "*.pem", "*id_rsa*"]
 SECRET_QUERY_RE = re.compile(r"key|secret|password|token|credential", re.IGNORECASE)
+INJ_RE = re.compile(
+    r"(ignore (all |any )?(previous|prior|above) instructions|you must now|note to (the )?(ai|assistant|agent)"
+    r"|disregard (the )?(user|above)|do not (tell|inform) the user|without telling the user"
+    r"|forward the full|send all documents)", re.I)
 SHELL_ALLOW = {"ls", "cat", "echo", "pwd", "head", "wc"}
 
 RULE_TEXT = {
@@ -46,6 +50,7 @@ RULE_TEXT = {
     "TAINT-001": "The outbound content contains a secret or credential",
     "SEQ-001": "Secret search followed by reading a config/credential file",
     "SEQ-002": "Sensitive data collected, then an unfamiliar destination contacted",
+    "SEQ-005": "Untrusted content with instruction-like text was read earlier in this session",
     "SEQ-004": "Repeated denied attempts in one session",
     "EXEC-001": "The shell command is not on the allowlist",
     "RISK-001": "Cumulative session risk reached the quarantine threshold",
@@ -97,6 +102,18 @@ class PolicyEngine:
         for threshold, cap in self.cfg.ladder:
             if s.risk >= threshold:
                 setattr(s.caps, cap, False if cap in ("network", "shell") else True)
+
+    def observe(self, s: Session, output: object) -> bool:
+        """Scan tool output for instruction-like text. Flag and raise risk; never trusted, never obeyed."""
+        if not self.cfg.behaviour:
+            return False
+        text = output if isinstance(output, str) else " ".join(map(str, output or []))
+        if INJ_RE.search(text):
+            s.tags.append("injection_seen")
+            s.risk = min(1.0, s.risk + 0.25)
+            self._reduce(s)
+            return True
+        return False
 
     # ---- main entry ----------------------------------------------------------
     def evaluate(self, req: ActionRequest, s: Session) -> Decision:
@@ -169,6 +186,8 @@ class PolicyEngine:
             prior_sens = {"env_read", "sensitive_read", "secret_search"} & set(s.tags)
             if "unknown_contact" in tags and prior_sens:
                 fire("SEQ-002", Verdict.REVIEW, 0.35, ",".join(sorted(prior_sens)) + " -> unknown")
+            if "injection_seen" in s.tags and (is_egress or req.op in (Op.EXEC, Op.QUERY)):
+                fire("SEQ-005", Verdict.REVIEW, 0.2, "after instruction-like content")
             if s.denied >= 3 and fired:
                 fire("SEQ-004", Verdict.ALLOW, 0.2, f"denied={s.denied}")
 

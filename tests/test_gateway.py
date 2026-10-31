@@ -120,3 +120,13 @@ def test_shell_cat_of_out_of_scope_file_blocked():
     _, _, c = setup("Run ls to list my files", grants)
     assert c.call("run_shell", cmd="ls research").decision.decision == Verdict.ALLOW
     assert c.call("run_shell", cmd="cat secrets/app.env").decision.decision == Verdict.BLOCK
+
+
+def test_injection_text_in_output_flags_session_and_sends_later_email_to_review():
+    grants = {**GRANTS, "destinations": ["advisor@university.edu"]}
+    _, gw, c = setup("Read research/inbox.md and email my advisor a summary", grants)
+    assert c.call("read_file", path="research/inbox.md").decision.decision == Verdict.ALLOW
+    assert "injection_seen" in gw.sessions["s1"].tags
+    r = c.call("send_email", to="advisor@university.edu", body="summary")
+    assert r.decision.decision == Verdict.REVIEW and "SEQ-005" in r.decision.fired_rules
+    assert any('"injection_flag"' in e["payload"] for e in gw.audit.entries)
