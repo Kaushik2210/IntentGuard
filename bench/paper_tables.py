@@ -11,7 +11,7 @@ from pathlib import Path
 RESULTS = Path(__file__).resolve().parent.parent / "results"
 MAIN = ["unprotected", "static_rbac", "keyword_guardrail_standin",
         "llamafirewall_local_scanners", "intentguard_full"]
-ABLATE = ["intentguard_full", "ablate_no_mention_check", "ablate_no_intent",
+ABLATE = ["intentguard_full", "ablate_no_cross_session", "ablate_no_mention_check", "ablate_no_intent",
           "ablate_no_behaviour", "ablate_no_dataflow"]
 
 
@@ -39,7 +39,7 @@ def main() -> None:
     print("# Generated tables (do not edit by hand)\n")
     print("## Main comparison\n")
     for label in ("gen_fresh_seed4242", "gen_heldout_seed2026", "adversarial", "adversarial2",
-                  "injection_text"):
+                  "injection_text", "xsession_db"):
         print(table(label, MAIN, cols))
     print("## Ablations\n")
     for label in ("gen_fresh_seed4242", "gen_heldout_seed2026"):

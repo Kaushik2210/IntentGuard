@@ -158,3 +158,9 @@ def test_risk_and_recon_tags_carry_across_sessions_of_one_agent():
     # a different agent starts clean
     other = gw.open_session("d", "agent-2", scope)
     assert other.call("send_email", to="advisor@university.edu", body="x").decision.decision == Verdict.ALLOW
+
+
+def test_destructive_sql_is_a_write_not_a_query():
+    _, _, c = setup("Query the database for experiment results", {**GRANTS, "ops": ["query", "read"]})
+    r = c.call("db_query", sql="DROP TABLE experiments")
+    assert r.decision.decision == Verdict.BLOCK and "SCOPE-002" in r.decision.fired_rules

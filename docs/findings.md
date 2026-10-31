@@ -209,8 +209,8 @@ Two gaps from F7 closed in code, each with a switch-off for comparison.
    tables to levels. SCOPE-003 (above the task's ceiling) and SCOPE-005 (CONFIDENTIAL+ table not named
    in the task) now apply to queries, and an allowed query taints the session like a file read.
    Effect: adversarial set 38.5% to 30.8% ASR; adversarial2 66.7% to 41.7%; the 4 sensitive-table
-   queries there are now blocked. Not fixed: `DROP TABLE experiments` (destructive write on an
-   INTERNAL table) still executes; classification does not model destructive operations.
+   queries there are now blocked. Destructive statements (`DROP/DELETE/TRUNCATE/ALTER/UPDATE/INSERT`) are now treated as WRITE, so a
+   query-only task blocks `DROP TABLE experiments` (SCOPE-002). Keyword-based: obfuscated SQL is not parsed.
 2. Risk and recon tags carry to a new session of the same agent (decay 0.75, only tags
    `secret_search`, `env_read`, `sensitive_read`, `injection_seen`), and the permission ladder is reapplied.
    Set `xsession_db` (23 steps), `ablate_no_cross_session` vs full: ASR 63.6% to 45.5%; both cross-session

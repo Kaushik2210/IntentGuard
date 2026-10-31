@@ -112,6 +112,8 @@ class Gateway:
                                     str(args.get("sql", "")), re.I)
             if req.tables:
                 req.classification = max(self.catalog.table_class(t) for t in req.tables)
+            if re.search(r"\b(drop|delete|truncate|alter|update|insert)\b", str(args.get("sql", "")), re.I):
+                req.op = Op.WRITE  # a destructive statement is a write, not a read-only query
         try:
             d = self.engine.evaluate(req, s)
         except Exception as exc:  # fail closed on engine error
