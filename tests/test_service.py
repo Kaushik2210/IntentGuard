@@ -49,3 +49,23 @@ def test_events_and_seed():
     ev = c.get("/events?limit=5").json()
     assert len(ev) == 5 and ev[0]["ts"] >= ev[-1]["ts"]
     assert c.get("/stats").json()["inspected"] == 12
+
+
+def test_tokens_separate_agent_and_admin():
+    from intentguard import AuditLog, Gateway, PolicyEngine
+    from intentguard.mock_env import MockEnv
+    from intentguard.service.app import create_app
+    env = MockEnv()
+    c = TestClient(create_app(Gateway(env.tools(), env.catalog(), PolicyEngine(), AuditLog()),
+                              agent_token="agent-secret", admin_token="admin-secret"))
+    body = {"session_id": "s1", "agent_id": "a", "task": "Summarize notes and email my advisor", "grants": GRANTS}
+    assert c.post("/sessions", json=body).status_code == 401
+    ag, ad = {"Authorization": "Bearer agent-secret"}, {"Authorization": "Bearer admin-secret"}
+    assert c.post("/sessions", json=body, headers=ag).status_code == 200
+    call = {"tool": "send_email", "args": {"to": "other@x.org", "body": "hi"}}
+    r = c.post("/sessions/s1/call", json=call, headers=ag)
+    aid = r.json()["decision"]["action_id"]
+    # an agent must not be able to approve its own action or read the audit trail
+    assert c.post(f"/pending/{aid}/approve", json={"approver": "x"}, headers=ag).status_code == 401
+    assert c.get("/audit", headers=ag).status_code == 401
+    assert c.post(f"/pending/{aid}/approve", json={"approver": "x"}, headers=ad).status_code == 200

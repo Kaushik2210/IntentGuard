@@ -7,11 +7,13 @@ Run the demo service (mock tools, synthetic data only):
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import time
 from collections import Counter
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -40,7 +42,21 @@ class Approver(BaseModel):
     approver: str
 
 
-def create_app(gateway: Gateway) -> FastAPI:
+def _guard(expected: str | None):
+    """Bearer-token check; no token configured means open (local demo only)."""
+    def dep(authorization: str | None = Header(None)) -> None:
+        if expected is None:
+            return
+        got = (authorization or "").removeprefix("Bearer ")
+        if not secrets.compare_digest(got.encode(), expected.encode()):
+            raise HTTPException(401, "unauthorized")
+    return Depends(dep)
+
+
+def create_app(gateway: Gateway, agent_token: str | None = None,
+               admin_token: str | None = None) -> FastAPI:
+    """agent_token protects /sessions (open) and /call; admin_token protects everything else."""
+    agent, admin = _guard(agent_token), _guard(admin_token)
     app = FastAPI(title="IntentGuard", version="0.1.0")
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"],
                        allow_methods=["*"], allow_headers=["*"])
@@ -65,7 +81,7 @@ def create_app(gateway: Gateway) -> FastAPI:
 
     app.state.do_open, app.state.do_call = do_open, do_call
 
-    @app.post("/sessions")
+    @app.post("/sessions", dependencies=[agent])
     def open_session(body: NewSession):
         if body.session_id in gateway.sessions:
             raise HTTPException(409, "session exists")
@@ -75,54 +91,54 @@ def create_app(gateway: Gateway) -> FastAPI:
             raise HTTPException(422, f"bad grants: {exc}") from exc
         return jsonable_encoder({"session_id": body.session_id, "scope": scope})
 
-    @app.get("/sessions/{sid}")
+    @app.get("/sessions/{sid}", dependencies=[admin])
     def get_session(sid: str):
         s = gateway.sessions.get(sid)
         if not s:
             raise HTTPException(404, "no such session")
         return jsonable_encoder(s)
 
-    @app.post("/sessions/{sid}/call")
+    @app.post("/sessions/{sid}/call", dependencies=[agent])
     def call(sid: str, body: ToolCall):
         if sid not in clients:
             raise HTTPException(404, "no such session")
         res = do_call(sid, body.tool, body.args)
         return jsonable_encoder({"decision": res.decision, "output": res.output})
 
-    @app.get("/events")
+    @app.get("/events", dependencies=[admin])
     def list_events(limit: int = 100):
         return events[-max(1, min(limit, 500)):][::-1]
 
-    @app.get("/pending")
+    @app.get("/pending", dependencies=[admin])
     def pending():
         return [by_action[a] for a in gateway.pending if a in by_action][::-1]
 
-    @app.post("/pending/{action_id}/approve")
+    @app.post("/pending/{action_id}/approve", dependencies=[admin])
     def approve(action_id: str, body: Approver):
         if action_id not in gateway.pending:
             raise HTTPException(404, "not pending")
         return jsonable_encoder({"output": gateway.approve(action_id, body.approver)})
 
-    @app.post("/pending/{action_id}/reject")
+    @app.post("/pending/{action_id}/reject", dependencies=[admin])
     def reject(action_id: str, body: Approver):
         if action_id not in gateway.pending:
             raise HTTPException(404, "not pending")
         gateway.reject(action_id, body.approver)
         return {"rejected": action_id}
 
-    @app.get("/audit")
+    @app.get("/audit", dependencies=[admin])
     def audit(offset: int = 0, limit: int = 100):
         limit = max(1, min(limit, 500))
         rows = gateway.audit.entries[offset:offset + limit]
         return {"total": len(gateway.audit.entries),
                 "entries": [{**e, "payload": json.loads(e["payload"])} for e in rows]}
 
-    @app.get("/audit/verify")
+    @app.get("/audit/verify", dependencies=[admin])
     def verify():
         ok, bad = gateway.audit.verify()
         return {"ok": ok, "first_bad_seq": bad}
 
-    @app.get("/stats")
+    @app.get("/stats", dependencies=[admin])
     def stats():
         acts = [json.loads(e["payload"]) for e in gateway.audit.entries]
         acts = [a for a in acts if a.get("event") == "action"]
@@ -156,10 +172,13 @@ DEMO_RUNS = [
 
 def demo_app() -> FastAPI:
     env = MockEnv()
-    app = create_app(Gateway(env.tools(), env.catalog(), PolicyEngine(), AuditLog()))
+    audit_file = os.environ.get("INTENTGUARD_AUDIT_FILE")  # persists the hash chain across restarts
+    admin_token = os.environ.get("INTENTGUARD_ADMIN_TOKEN")
+    app = create_app(Gateway(env.tools(), env.catalog(), PolicyEngine(), AuditLog(audit_file)),
+                     os.environ.get("INTENTGUARD_AGENT_TOKEN"), admin_token)
     n = {"i": 0}
 
-    @app.post("/demo/seed")
+    @app.post("/demo/seed", dependencies=[_guard(admin_token)])
     def seed():
         """Replay synthetic scenarios so the dashboard has data. Demo service only."""
         n["i"] += 1
