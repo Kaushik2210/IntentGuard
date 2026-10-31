@@ -43,3 +43,32 @@ evaluated on a new held-out set rather than this one.
 
 Benign look-alikes (4 episodes) produced no false positives, including a double-config-read case.
 That is a small sample; the double-read stress case sits just under the 0.4 reduction threshold.
+
+## F4: first generated run (dev seed 1: 150 episodes, held-out seed 2026: 300 episodes)
+
+`bench/generate.py` makes episodes from templates with a seed. Seed 2026 was not looked at while the
+engine was being built, so it is the first held-out set. Engine at commit `5ce9b82`.
+
+Held-out seed 2026 (140 malicious, 119 benign, 41 ambiguous):
+
+| System | ASR | Benign actions blocked | Exfil attempts that succeeded |
+|---|---|---|---|
+| unprotected | 100% | 0% | 100% |
+| static RBAC | 75.5% | 8.4% | 61.9% |
+| keyword guardrail (stand-in, not a published tool) | 80.5% | 0.0% | 73.2% |
+| IntentGuard full | 43.2% | 0.0% | 18.6% |
+| no intent analysis | 63.6% | 0.0% | 34.0% |
+| no behaviour analysis | 45.9% | 0.0% | 21.6% |
+| no data-flow analysis | 50.0% | 0.0% | 34.0% |
+
+The 11.4% ASR on the hand-written core set does not hold up on held-out data: it is 43.2%.
+Intent analysis contributes most; behaviour and data-flow contribute smaller, overlapping amounts.
+
+Where IntentGuard fails (held-out, harmful steps that executed): all of them are credential-class
+reads under broad grants. `credential_sweep` reads 49/49 and its sends to an approved destination
+13/13; `recon_then_egress` reads 28/31 and sends 5/8. Everything else (unauthorized file access,
+injected egress to unknown or denylisted destinations, credential leaks with secret patterns,
+privilege escalation) was stopped in every case. This is the weakness predicted in F3.
+
+Procedure from here: do not tune on seed 2026. Develop the credential-read rule against dev seed 1,
+then evaluate on a fresh seed and report both the 2026 number (before) and the new one (after).

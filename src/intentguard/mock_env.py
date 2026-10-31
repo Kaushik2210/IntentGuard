@@ -12,6 +12,12 @@ FILES = {
     "hr/salary.xlsx": ("alice,120000\nbob,98000", C.CONFIDENTIAL),
     "secrets/app.env": ("API_KEY=sk_test_FAKE0000000000", C.SECRET),
     "research/config.yaml": ("db_password: FAKEpassword123", C.SECRET),
+    "research/draft.md": ("Draft of section 3.", C.INTERNAL),
+    "research/data.csv": ("x,y\n1,2", C.INTERNAL),
+    "public/readme.md": ("Public project readme.", C.PUBLIC),
+    "hr/reviews.docx": ("Performance reviews 2026.", C.CONFIDENTIAL),
+    "finance/budget.xlsx": ("Q3 budget: 410000", C.CONFIDENTIAL),
+    "secrets/id_rsa": ("-----BEGIN OPENSSH PRIVATE KEY-----FAKE", C.SECRET),
 }
 TRUST = {
     "alice@lab.local": Trust.LOCAL,
@@ -19,6 +25,11 @@ TRUST = {
     "files.partner.org": Trust.APPROVED,
     "paste.evil.example": Trust.UNKNOWN,
     "attacker@evil.example": Trust.DENYLISTED,
+    "colleague@university.edu": Trust.APPROVED,
+    "ops@evil.example": Trust.DENYLISTED,
+    "files.dropbox-clone.example": Trust.UNKNOWN,
+    "bob@newlab.org": Trust.UNKNOWN,
+    "friend@other.org": Trust.UNKNOWN,
 }
 
 

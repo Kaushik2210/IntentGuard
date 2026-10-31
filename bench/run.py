@@ -21,6 +21,7 @@ from intentguard.mock_env import MockEnv  # noqa: E402
 
 from .baselines import SYSTEMS  # noqa: E402
 from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_seq  # noqa: E402
+from .generate import generate  # noqa: E402
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -118,7 +119,9 @@ def main() -> None:
     out = ROOT / "results"
     out.mkdir(exist_ok=True)
     md = "# IntentGuardBench results\n\n" + "\n".join(
-        report(label, eps, out, commit) for label, eps in (("core", build()), ("seq", build_seq())))
+        report(label, eps, out, commit) for label, eps in (("core", build()), ("seq", build_seq()),
+                         ("gen_dev_seed1", generate(1, 150)),
+                         ("gen_heldout_seed2026", generate(2026, 300))))
     (out / "results.md").write_text(md)
     print(md)
 

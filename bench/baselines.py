@@ -29,9 +29,27 @@ class StaticPermissionEngine:
                         "allow" if ok else "block", replace(s.caps))
 
 
+class KeywordGuardrailEngine:
+    """Stand-in for a content/keyword guardrail (NOT a published tool): blocks denylisted
+    destinations, secret patterns in arguments, and obviously dangerous shell strings. It has no
+    notion of the user's task, data classification or session history."""
+
+    BAD_SHELL = ("curl", "wget", "nc ", "env", "/etc/passwd", "chmod", "| sh", "rm -")
+
+    def evaluate(self, req: ActionRequest, s: Session) -> Decision:
+        from intentguard.engine import SECRET_RE
+        from intentguard.models import Trust
+        hit = (req.trust == Trust.DENYLISTED or bool(SECRET_RE.search(str(req.args)))
+               or any(b in str(req.args.get("cmd", "")) for b in self.BAD_SHELL))
+        return Decision(req.action_id, Verdict.BLOCK if hit else Verdict.ALLOW, 0.0,
+                        ["KW-001"] if hit else [], [], "keyword guardrail",
+                        "block" if hit else "allow", replace(s.caps))
+
+
 SYSTEMS = {
     "unprotected": AllowAllEngine,
     "static_rbac": StaticPermissionEngine,
+    "keyword_guardrail_standin": KeywordGuardrailEngine,
     "intentguard_full": lambda: PolicyEngine(EngineConfig()),
     "ablate_no_intent": lambda: PolicyEngine(EngineConfig(intent=False)),
     "ablate_no_behaviour": lambda: PolicyEngine(EngineConfig(behaviour=False)),
