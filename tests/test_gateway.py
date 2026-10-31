@@ -107,3 +107,16 @@ def test_sensitive_file_not_named_in_task_needs_review():
     assert c.call("read_file", path="secrets/app.env").decision.decision == Verdict.REVIEW
     _, _, c2 = setup("Read secrets/app.env to debug my environment", broad)
     assert c2.call("read_file", path="secrets/app.env").decision.decision == Verdict.ALLOW
+
+
+def test_path_traversal_is_canonicalised_and_blocked():
+    _, _, c = setup()
+    r = c.call("read_file", path="research/../hr/salary.xlsx")
+    assert r.decision.decision == Verdict.BLOCK and r.output is None
+
+
+def test_shell_cat_of_out_of_scope_file_blocked():
+    grants = {**GRANTS, "ops": ["exec", "read"]}
+    _, _, c = setup("Run ls to list my files", grants)
+    assert c.call("run_shell", cmd="ls research").decision.decision == Verdict.ALLOW
+    assert c.call("run_shell", cmd="cat secrets/app.env").decision.decision == Verdict.BLOCK

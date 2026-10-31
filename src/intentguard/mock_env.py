@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import posixpath
+
 from .gateway import Catalog, Tool
 from .models import Classification as C
 from .models import Op, Trust
@@ -44,7 +46,7 @@ class MockEnv:
 
     def tools(self) -> list[Tool]:
         def read_file(path):
-            return FILES[path][0]
+            return FILES[posixpath.normpath(path)][0]
 
         def search_files(query):
             return [p for p, (body, _) in FILES.items() if query.lower() in body.lower()

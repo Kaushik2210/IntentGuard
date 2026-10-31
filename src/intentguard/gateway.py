@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import posixpath
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,6 +52,11 @@ class Catalog:
         return self.trust.get(dest, Trust.UNKNOWN)
 
 
+def canonical(path: str) -> str:
+    """Normalise before any policy check so 'research/../hr/x' is judged as 'hr/x'."""
+    return posixpath.normpath(str(path).replace("\\", "/"))
+
+
 class Gateway:
     def __init__(self, tools: list[Tool], catalog: Catalog, engine: PolicyEngine | None = None,
                  audit: AuditLog | None = None):
@@ -77,7 +83,14 @@ class Gateway:
                          "- Tool is not registered for this agent", "block", s.caps)
             self._log(req, d)
             return Result(d)
+        if tool.resource_arg and args.get(tool.resource_arg) is not None:
+            args = {**args, tool.resource_arg: canonical(args[tool.resource_arg])}
         res = args.get(tool.resource_arg) if tool.resource_arg else None
+        if tool.op == Op.EXEC:  # files named inside a shell command are resources too
+            paths = [canonical(w) for w in str(args.get("cmd", "")).split()[1:]
+                     if not w.startswith("-") and ("/" in w or "." in w)]
+            if paths:
+                res = max(paths, key=self.catalog.classify)
         dest = args.get(tool.dest_arg) if tool.dest_arg else None
         req = ActionRequest(
             session_id, s.agent_id, tool.name, tool.op, resource=res,
