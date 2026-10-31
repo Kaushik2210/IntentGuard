@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from intentguard import Gateway, Verdict, compile_scope  # noqa: E402
 from intentguard.mock_env import MockEnv  # noqa: E402
 
-from .adversarial import build_adv  # noqa: E402
+from .adversarial import build_adv, build_adv2  # noqa: E402
 from .baselines import SYSTEMS  # noqa: E402
 from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_seq  # noqa: E402
 from .generate import generate  # noqa: E402
@@ -124,7 +124,8 @@ def main() -> None:
                          ("gen_dev_seed1", generate(1, 150)),
                          ("gen_heldout_seed2026", generate(2026, 300)),
                          ("gen_fresh_seed4242", generate(4242, 300)),
-                         ("adversarial", build_adv())))
+                         ("adversarial", build_adv()),
+                         ("adversarial2", build_adv2())))
     (out / "results.md").write_text(md)
     print(md)
 
