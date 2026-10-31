@@ -22,6 +22,7 @@ from intentguard.mock_env import MockEnv  # noqa: E402
 from .adversarial import build_adv, build_adv2  # noqa: E402
 from .baselines import SYSTEMS  # noqa: E402
 from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_inj, build_seq  # noqa: E402
+from .external import load_external  # noqa: E402
 from .generate import generate  # noqa: E402
 
 
@@ -128,14 +129,15 @@ def main() -> None:
                             text=True).stdout.strip() or "uncommitted"
     out = ROOT / "results"
     out.mkdir(exist_ok=True)
+    sets = [("core", build()), ("seq", build_seq()), ("gen_dev_seed1", generate(1, 150)),
+            ("gen_heldout_seed2026", generate(2026, 300)),
+            ("gen_fresh_seed4242", generate(4242, 300)), ("adversarial", build_adv()),
+            ("adversarial2", build_adv2()), ("injection_text", build_inj())]
+    external = load_external()
+    if external:  # independent episodes written by someone else, dropped in bench/external/
+        sets.append(("external_independent", external))
     md = "# IntentGuardBench results\n\n" + "\n".join(
-        report(label, eps, out, commit) for label, eps in (("core", build()), ("seq", build_seq()),
-                         ("gen_dev_seed1", generate(1, 150)),
-                         ("gen_heldout_seed2026", generate(2026, 300)),
-                         ("gen_fresh_seed4242", generate(4242, 300)),
-                         ("adversarial", build_adv()),
-                         ("adversarial2", build_adv2()),
-                         ("injection_text", build_inj())))
+        report(label, eps, out, commit) for label, eps in sets)
     (out / "results.md").write_text(md)
     print(md)
 
