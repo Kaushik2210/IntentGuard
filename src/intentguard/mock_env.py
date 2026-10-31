@@ -26,6 +26,8 @@ FILES = {
                             C.INTERNAL),
     "secrets/id_rsa": ("-----BEGIN OPENSSH PRIVATE KEY-----FAKE", C.SECRET),
 }
+TABLES = {"experiments": C.INTERNAL, "papers": C.PUBLIC, "salaries": C.CONFIDENTIAL,
+          "employees": C.CONFIDENTIAL, "users": C.SECRET, "sessions": C.SECRET}
 TRUST = {
     "alice@lab.local": Trust.LOCAL,
     "advisor@university.edu": Trust.APPROVED,
@@ -47,7 +49,7 @@ class MockEnv:
         self.shell_log: list[str] = []
 
     def catalog(self) -> Catalog:
-        return Catalog({k: v[1] for k, v in FILES.items()}, dict(TRUST))
+        return Catalog({k: v[1] for k, v in FILES.items()}, dict(TRUST), dict(TABLES))
 
     def tools(self) -> list[Tool]:
         def read_file(path):

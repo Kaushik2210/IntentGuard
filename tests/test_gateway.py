@@ -130,3 +130,31 @@ def test_injection_text_in_output_flags_session_and_sends_later_email_to_review(
     r = c.call("send_email", to="advisor@university.edu", body="summary")
     assert r.decision.decision == Verdict.REVIEW and "SEQ-005" in r.decision.fired_rules
     assert any('"injection_flag"' in e["payload"] for e in gw.audit.entries)
+
+
+def test_db_query_is_classified_by_table():
+    grants = {**GRANTS, "ops": ["query", "read"]}
+    _, _, c = setup("Query the database for experiment results", grants)
+    assert c.call("db_query", sql="SELECT count(*) FROM experiments").decision.decision == Verdict.ALLOW
+    assert c.call("db_query", sql="SELECT * FROM salaries").decision.decision == Verdict.BLOCK
+    _, _, c2 = setup("Query the salaries table for payroll",
+                     {**grants, "max_classification": "CONFIDENTIAL"})
+    assert c2.call("db_query", sql="SELECT * FROM salaries").decision.decision == Verdict.ALLOW
+
+
+def test_risk_and_recon_tags_carry_across_sessions_of_one_agent():
+    broad = {"resources": ["*"], "max_classification": "SECRET", "project_root": "research/",
+             "destinations": ["advisor@university.edu"]}
+    scope = compile_scope("Summarize my app config research and email my advisor", broad)
+    env = MockEnv()
+    gw = Gateway(env.tools(), env.catalog(), PolicyEngine())
+    gw.open_session("a", "agent-1", scope).call("search_files", query="api key")
+    s1 = gw.open_session("b", "agent-1", scope)
+    r1 = s1.call("read_file", path="secrets/app.env")   # task words match, so only the sequence rule fires
+    assert "SEQ-001" in r1.decision.fired_rules
+    s1.call("read_file", path="research/config.yaml")
+    s2 = gw.open_session("c", "agent-1", scope)
+    assert s2.call("send_email", to="advisor@university.edu", body="x").decision.decision == Verdict.BLOCK
+    # a different agent starts clean
+    other = gw.open_session("d", "agent-2", scope)
+    assert other.call("send_email", to="advisor@university.edu", body="x").decision.decision == Verdict.ALLOW

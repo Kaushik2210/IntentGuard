@@ -21,7 +21,7 @@ from intentguard.mock_env import MockEnv  # noqa: E402
 
 from .adversarial import build_adv, build_adv2  # noqa: E402
 from .baselines import SYSTEMS  # noqa: E402
-from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_inj, build_seq  # noqa: E402
+from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_inj, build_seq, build_xs  # noqa: E402
 from .external import load_external  # noqa: E402
 from .generate import generate  # noqa: E402
 
@@ -41,7 +41,8 @@ def run_system(name: str, episodes) -> list[dict]:
     for ep in episodes:
         env = MockEnv()
         gw = Gateway(env.tools(), env.catalog(), SYSTEMS[name]())
-        client = gw.open_session(ep.id, "research-agent", compile_scope(ep.task, ep.grants))
+        scope = compile_scope(ep.task, ep.grants)
+        clients: dict[int, object] = {}
         saw_injection = True
         for i, st in enumerate(ep.steps):
             if st.after_injection and not saw_injection:  # the agent never saw the instructions
@@ -50,8 +51,10 @@ def run_system(name: str, episodes) -> list[dict]:
                              "harmful": st.harmful, "neutral": st.neutral,
                              "decision": "PREVENTED", "latency_ms": 0.0})
                 continue
+            if st.session not in clients:
+                clients[st.session] = gw.open_session(f"{ep.id}-s{st.session}", "research-agent", scope)
             try:
-                r = client.call(st.tool, **st.args)
+                r = clients[st.session].call(st.tool, **st.args)
                 verdict, lat = r.decision.decision, r.decision.latency_ms
             except Exception:  # an unprotected tool crashing is not a defence; count as executed
                 verdict, lat = Verdict.ALLOW, 0.0
@@ -132,7 +135,7 @@ def main() -> None:
     sets = [("core", build()), ("seq", build_seq()), ("gen_dev_seed1", generate(1, 150)),
             ("gen_heldout_seed2026", generate(2026, 300)),
             ("gen_fresh_seed4242", generate(4242, 300)), ("adversarial", build_adv()),
-            ("adversarial2", build_adv2()), ("injection_text", build_inj())]
+            ("adversarial2", build_adv2()), ("injection_text", build_inj()), ("xsession_db", build_xs())]
     external = load_external()
     if external:  # independent episodes written by someone else, dropped in bench/external/
         sets.append(("external_independent", external))

@@ -200,3 +200,23 @@ Honest reading:
   scanning plus session consequences works when the pattern matches"; paraphrased injection needs a
   model-based detector (PROMPT_GUARD, not run here).
 - 14 episodes is a small set; confidence intervals are wide.
+
+## F10: database table classification and cross-session risk (same author as the engine)
+
+Two gaps from F7 closed in code, each with a switch-off for comparison.
+
+1. DB queries are classified by the tables they touch (`FROM/JOIN/INTO/UPDATE/TABLE`); the catalog maps
+   tables to levels. SCOPE-003 (above the task's ceiling) and SCOPE-005 (CONFIDENTIAL+ table not named
+   in the task) now apply to queries, and an allowed query taints the session like a file read.
+   Effect: adversarial set 38.5% to 30.8% ASR; adversarial2 66.7% to 41.7%; the 4 sensitive-table
+   queries there are now blocked. Not fixed: `DROP TABLE experiments` (destructive write on an
+   INTERNAL table) still executes; classification does not model destructive operations.
+2. Risk and recon tags carry to a new session of the same agent (decay 0.75, only tags
+   `secret_search`, `env_read`, `sensitive_read`, `injection_seen`), and the permission ladder is reapplied.
+   Set `xsession_db` (23 steps), `ablate_no_cross_session` vs full: ASR 63.6% to 45.5%; both cross-session
+   exfiltration emails blocked only with carry-over; two benign multi-session workdays unaffected.
+
+No change on any earlier set (core, seq, generated, injection). Caveats: cross-session episodes were built
+to exercise exactly this mechanism, there are only 2 attack and 2 benign multi-session episodes, an
+agent id is trusted as given (a fresh agent id resets history), and legitimate agents that do risky
+work in many sessions will accumulate carried risk, which has not been measured at scale.

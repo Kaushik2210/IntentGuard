@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -41,9 +42,14 @@ class Catalog:
     """Ground truth about resources and destinations. The agent cannot influence it."""
 
     def __init__(self, classes: dict[str, Classification] | None = None,
-                 trust: dict[str, Trust] | None = None):
+                 trust: dict[str, Trust] | None = None,
+                 tables: dict[str, Classification] | None = None):
         self.classes = classes or {}
         self.trust = trust or {}
+        self.tables = tables or {}
+
+    def table_class(self, table: str) -> Classification:
+        return self.tables.get(table.lower(), Classification.INTERNAL)
 
     def classify(self, resource: str) -> Classification:
         return self.classes.get(resource, Classification.INTERNAL)  # unknown -> not public
@@ -66,9 +72,14 @@ class Gateway:
         self.audit = audit or AuditLog()
         self.sessions: dict[str, Session] = {}
         self.pending: dict[str, tuple[Session, Tool, dict]] = {}
+        self.memory: dict[str, dict] = {}  # per-agent risk and tags carried across sessions
 
     def open_session(self, session_id: str, agent_id: str, scope: TaskScope) -> GatewayClient:
-        self.sessions[session_id] = Session(session_id, agent_id, scope)
+        s = Session(session_id, agent_id, scope)
+        carry = getattr(self.engine, "carry", None)
+        if carry and agent_id in self.memory:
+            carry(s, self.memory[agent_id])
+        self.sessions[session_id] = s
         self.audit.append({"event": "session_open", "session": session_id, "agent": agent_id,
                            "task": scope.task_text})
         return GatewayClient(self, session_id)
@@ -96,6 +107,11 @@ class Gateway:
             session_id, s.agent_id, tool.name, tool.op, resource=res,
             classification=self.catalog.classify(res) if res else Classification.PUBLIC,
             destination=dest, trust=self.catalog.trust_of(dest) if dest else None, args=args)
+        if tool.op == Op.QUERY:  # classify the tables a query touches, not just the tool
+            req.tables = re.findall(r"\b(?:from|join|into|update|table)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                                    str(args.get("sql", "")), re.I)
+            if req.tables:
+                req.classification = max(self.catalog.table_class(t) for t in req.tables)
         try:
             d = self.engine.evaluate(req, s)
         except Exception as exc:  # fail closed on engine error
@@ -126,6 +142,8 @@ class Gateway:
         return out
 
     def _log(self, req: ActionRequest, d: Decision) -> None:
+        sess = self.sessions[req.session_id]
+        self.memory[req.agent_id] = {"risk": sess.risk, "tags": set(sess.tags)}
         self.audit.append({
             "event": "action", "action": req.action_id, "session": req.session_id,
             "agent": req.agent_id, "tool": req.tool, "op": req.op.value, "resource": req.resource,

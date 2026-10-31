@@ -67,6 +67,8 @@ class EngineConfig:
                      (0.8, "db_needs_review"))
     quarantine_at: float = 1.0
     low_confidence: float = 0.6
+    cross_session: bool = True  # carry decayed risk and tags to a new session of the same agent
+    carry_decay: float = 0.75
     mention_check: bool = True  # CONFIDENTIAL+ reads must be referenced by the task text
 
 
@@ -102,6 +104,15 @@ class PolicyEngine:
         for threshold, cap in self.cfg.ladder:
             if s.risk >= threshold:
                 setattr(s.caps, cap, False if cap in ("network", "shell") else True)
+
+    CARRY_TAGS = {"secret_search", "env_read", "sensitive_read", "injection_seen"}
+
+    def carry(self, s: Session, mem: dict) -> None:
+        if not (self.cfg.cross_session and self.cfg.behaviour):
+            return
+        s.risk = mem["risk"] * self.cfg.carry_decay
+        s.tags = sorted(set(mem["tags"]) & self.CARRY_TAGS)
+        self._reduce(s)
 
     def observe(self, s: Session, output: object) -> bool:
         """Scan tool output for instruction-like text. Flag and raise risk; never trusted, never obeyed."""
@@ -152,10 +163,11 @@ class PolicyEngine:
                      sc.max_classification.name)
             if sc.confidence < cfg.low_confidence and req.classification >= Classification.CONFIDENTIAL:
                 fire("SCOPE-004", Verdict.REVIEW, 0.05, f"confidence={sc.confidence}")
-            if (cfg.mention_check and req.op == Op.READ and req.resource
-                    and req.classification >= Classification.CONFIDENTIAL
-                    and not _mentioned(req.resource, sc.task_text)):
-                fire("SCOPE-005", Verdict.REVIEW, 0.2, req.resource, "named in the task")
+            names = [req.resource] if req.op == Op.READ and req.resource else (
+                req.tables if req.op == Op.QUERY else [])
+            if (cfg.mention_check and names and req.classification >= Classification.CONFIDENTIAL
+                    and not any(_mentioned(n, sc.task_text) for n in names)):
+                fire("SCOPE-005", Verdict.REVIEW, 0.2, ",".join(names), "named in the task")
 
         # destination trust + data flow
         if req.destination and is_egress:
@@ -202,10 +214,10 @@ class PolicyEngine:
             s.tags.extend(tags)
         if verdict in (Verdict.BLOCK, Verdict.QUARANTINE):
             s.denied += 1
-        if verdict == Verdict.ALLOW and req.op == Op.READ:
+        if verdict == Verdict.ALLOW and req.op in (Op.READ, Op.QUERY):
             s.taint = max(s.taint, req.classification)
-            if req.resource and req.classification >= Classification.CONFIDENTIAL:
-                s.taint_sources.add(req.resource)
+            if req.classification >= Classification.CONFIDENTIAL:
+                s.taint_sources.add(req.resource or ",".join(req.tables))
         if cfg.behaviour:
             self._reduce(s)
             if s.risk >= cfg.quarantine_at:
