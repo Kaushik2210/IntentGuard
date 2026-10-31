@@ -22,3 +22,7 @@ pythonpath = ["src", "."]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["B018", "E501"]

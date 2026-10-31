@@ -19,9 +19,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from intentguard import Gateway, Verdict, compile_scope  # noqa: E402
 from intentguard.mock_env import MockEnv  # noqa: E402
 
+from .adversarial import build_adv  # noqa: E402
 from .baselines import SYSTEMS  # noqa: E402
 from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_seq  # noqa: E402
-from .adversarial import build_adv  # noqa: E402
 from .generate import generate  # noqa: E402
 
 

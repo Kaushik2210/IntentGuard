@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import posixpath
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
