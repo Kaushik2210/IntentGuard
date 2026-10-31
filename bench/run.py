@@ -20,7 +20,7 @@ from intentguard import Gateway, Verdict, compile_scope  # noqa: E402
 from intentguard.mock_env import MockEnv  # noqa: E402
 
 from .baselines import SYSTEMS  # noqa: E402
-from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build  # noqa: E402
+from .episodes import AMBIGUOUS, BENIGN, MALICIOUS, build, build_seq  # noqa: E402
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -84,24 +84,20 @@ def pct(x):
     return "n/a" if x is None else f"{100 * x:.1f}%"
 
 
-def main() -> None:
-    episodes = build()
-    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
-                            text=True).stdout.strip() or "uncommitted"
+def report(label: str, episodes, out: Path, commit: str) -> str:
     cfg_hash = hashlib.sha256(json.dumps([e.id for e in episodes]).encode()).hexdigest()[:10]
     all_rows, summary = [], {}
     for name in SYSTEMS:
         rows = run_system(name, episodes)
         all_rows += rows
         summary[name] = summarize(rows)
-    out = ROOT / "results"
-    out.mkdir(exist_ok=True)
-    meta = {"git_commit": commit, "episode_set_hash": cfg_hash, "episodes": len(episodes),
+    meta = {"set": label, "git_commit": commit, "episode_set_hash": cfg_hash,
+            "episodes": len(episodes),
             "by_kind": {k: sum(e.kind == k for e in episodes) for k in (BENIGN, AMBIGUOUS, MALICIOUS)},
             "seed": "none (deterministic scripted episodes)"}
-    (out / "results.json").write_text(json.dumps({"meta": meta, "summary": summary, "rows": all_rows}, indent=1))
-
-    lines = [f"# IntentGuardBench v0 results\n", f"commit `{commit}`, episode-set hash `{cfg_hash}`, "
+    (out / f"results_{label}.json").write_text(
+        json.dumps({"meta": meta, "summary": summary, "rows": all_rows}, indent=1))
+    lines = [f"## IntentGuardBench {label}\n", f"commit `{commit}`, episode-set hash `{cfg_hash}`, "
              f"{meta['episodes']} episodes {meta['by_kind']}, deterministic scripted agent, synthetic env.\n",
              "| System | ASR (95% CI) | Detection | FPR block (95% CI) | Review friction | Precision "
              "| Exfil rate | Task completion | p50 / p95 ms |", "|---|---|---|---|---|---|---|---|---|"]
@@ -113,8 +109,18 @@ def main() -> None:
                      f"| {s['latency_p50_ms']:.3f} / {s['latency_p95_ms']:.3f} |")
     lines.append("| external_guardrail | TO MEASURE | TO MEASURE | TO MEASURE | TO MEASURE | TO MEASURE "
                  "| TO MEASURE | TO MEASURE | TO MEASURE |")
-    (out / "results.md").write_text("\n".join(lines) + "\n")
-    print("\n".join(lines))
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
+                            text=True).stdout.strip() or "uncommitted"
+    out = ROOT / "results"
+    out.mkdir(exist_ok=True)
+    md = "# IntentGuardBench results\n\n" + "\n".join(
+        report(label, eps, out, commit) for label, eps in (("core", build()), ("seq", build_seq())))
+    (out / "results.md").write_text(md)
+    print(md)
 
 
 if __name__ == "__main__":

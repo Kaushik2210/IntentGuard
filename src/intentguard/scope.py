@@ -25,6 +25,8 @@ def compile_scope(task: str, grants: dict) -> TaskScope:
     for pat, o in _VERBS:
         if re.search(pat, task, re.IGNORECASE):
             ops |= o
+    if ops & {Op.SEND, Op.UPLOAD, Op.SUMMARIZE}:  # sending or summarizing implies reading the source
+        ops.add(Op.READ)
     confidence = 1.0
     if not ops:  # unclear task -> least privilege, flag low confidence
         ops, confidence = {Op.READ}, 0.5
