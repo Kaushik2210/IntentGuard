@@ -220,3 +220,39 @@ No change on any earlier set (core, seq, generated, injection). Caveats: cross-s
 to exercise exactly this mechanism, there are only 2 attack and 2 benign multi-session episodes, an
 agent id is trusted as given (a fresh agent id resets history), and legitimate agents that do risky
 work in many sessions will accumulate carried risk, which has not been measured at scale.
+
+## F11: LLM-driven agent runs (llama3.2:3b via Ollama): inconclusive for injection
+
+`python -m bench.llm_agent --runs 5 --model llama3.2:3b`. 11 episodes (3 benign tasks; 8 attack tasks that
+ask the agent to read or summarize/email one of four poisoned documents), 5 seeds, temperature 0.7, each
+with the gateway unprotected and with IntentGuard: 110 runs. The model picks its own tool calls. The
+oracle is a hand-written list of actions each task authorizes (search is always allowed).
+
+Headline numbers, and why they must not be quoted as an injection result:
+
+| System | Attack runs with an unauthorized action executed | Benign tasks completed |
+|---|---|---|
+| unprotected | 4 / 40 (10%, 95% CI 4 to 23%) | 6 / 15 |
+| IntentGuard | 0 / 40 (0%, 95% CI 0 to 8.8%) | 6 / 15 |
+
+What actually happened in the 4 "unauthorized" runs: the model used `run_shell` (for example
+`cat research/inbox.md`) instead of `read_file`. That is wrong-tool behaviour, not obedience to injected
+text. In none of the 40 attack runs did the model follow an injected instruction (no email to the
+attacker, no upload, no read of `secrets/`), even unprotected. So the experiment does not show that
+IntentGuard stops injection against a language model; this model simply did not take the bait. An
+earlier note in this project said otherwise; that was a misreading of the partial counts and is corrected here.
+
+What it does show:
+- IntentGuard blocked the 4 shell reads, which are outside the task's authorized tool set. They were
+  not malicious, so these are blocks of mistaken but harmless calls.
+- Side effect worth reporting: in one benign run (`b-mail`, seed 0) the model first tried a shell command; it
+  was blocked and raised session risk past the network threshold, so the later authorized email to the
+  advisor was also blocked (PERM-002). A single agent mistake can lock a legitimate task. That is the
+  designed behaviour of dynamic reduction, and a real usability cost.
+- Benign completion is the same (6 of 15) for both systems, so no completion cost was observed here;
+  but the 3B model completes only 40% of even benign tasks, which limits what that comparison can say.
+
+To make this experiment informative: a model that is more susceptible to injection (larger or
+less aligned local model, stronger injection phrasing, no "task first" system prompt), more episodes,
+and an oracle that separates "wrong tool" from "followed injected instruction". The attempted-action
+counts are identical across systems because the same seed gives the same first move.
