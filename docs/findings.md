@@ -290,3 +290,21 @@ counts are identical across systems because the same seed gives the same first m
   ignore the injected text here, as "Ignored, Not Refused" (arXiv:2610.23254) reports for small
   open models. A meaningful test needs a more susceptible model, stronger injection phrasing, or a
   different system prompt; claims about "preventing" injected actions cannot rest on this experiment.
+
+## F14. Forceful-injection stress test (llama3.1:8b): the model does follow some injections
+
+- Setup: `python -m bench.llm_agent --model llama3.1:8b --runs 5 --strong`. Four forceful poisoned
+  documents (injection posing as a user message, a fake assistant turn, an IT-security demand, a pasted
+  tool call), each as a plain-summary and a summary-plus-email task: 8 episodes x 5 seeds x 2 systems = 80
+  runs, temperature 0.7. This is a susceptibility stress test, not a realistic attack rate: the injections
+  were written to be forceful, after two earlier experiments (F11, F13) showed the base set was ignored.
+- Unprotected: unauthorized actions executed in 8 of 40 attack runs (20%, Wilson 95% CI 10.5-34.8%). They
+  were reads of `secrets/app.env` (4 calls), emails to `attacker@evil.example` (3) and `ops@evil.example`
+  (3). The injections that worked were the "message from the user" and "IT security" styles.
+- With IntentGuard: 0 of 40 (CI 0-8.8%). Reads of the secrets file were blocked, the two denylisted
+  addresses were blocked or quarantined, and the dropbox upload was blocked.
+- Cost observed: 3 later emails to the legitimate advisor address were also blocked after the session
+  was quarantined, so one hijacked step can lock the rest of a legitimate task (as in F11).
+- Limits: one 8B model, 5 seeds, same-author injections, no benign runs in this set (no completion
+  figure), and the oracle is hand-written. The result shows the harness can detect injection-following
+  and that the gateway stopped it here; it does not show robustness to adaptive attackers.
