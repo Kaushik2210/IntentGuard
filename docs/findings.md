@@ -330,3 +330,45 @@ All benign controls (encoded-looking status mail, three small status mails, full
 reads, quoted/qualified SQL on public tables) were allowed in both halves, so no false-positive
 baseline problem. Procedure: fixes are developed on `rt_dev` only; `rt_heldout` is then run once and
 reported next to this table, including anything that still fails.
+
+## F16. Fixes for the F15 gaps, and what they cost
+
+Changes (developed against `rt_dev`; tests in `tests/test_hardening.py`):
+1. Outbound content check (TAINT-001) now also looks at base64 runs, hex runs and the rot13 of the text.
+   Only these three were added, on purpose: the held-out half also has base32, URL-encoded and reversed
+   payloads, so it measures how far the fix generalises.
+2. Outbound text is buffered per session (last 4000 characters, destination excluded), so a secret split
+   over several messages is caught when the pieces complete a pattern. The earlier pieces have already been
+   sent: the leak is cut off, not undone.
+3. SCOPE-005: a file is named only by its path or its full file name (for example `budget.xlsx`); a shared
+   word such as "budget", "app" or "config" no longer counts. A table is named by its name as a whole word.
+4. SQL tables are found after stripping comments, string literals and quoting, with schema prefixes
+   dropped, comma lists followed, and any known catalogue table named anywhere in the query counted
+   (subqueries, UNION, WITH). Over-approximate by design; not a SQL parser.
+
+A bug of mine, found through the held-out half: the first version of the outbound buffer included the
+recipient address in every message, so split secrets never formed a pattern. `rt_dev` passed only by
+accident. The held-out half was run once with the bug (7 of 17 executed, 41.2%), the bug was
+fixed (destination excluded, a dev test added), and the held-out half was run again. This means rt_heldout
+influenced one fix, so it is no longer strictly untouched; the number below is the second run.
+
+Harmful steps that executed (IntentGuard full):
+
+| Class | rt_dev before -> after | rt_heldout before -> after |
+|---|---|---|
+| encoded exfiltration | 3/3 -> 0/3 | 4/4 -> 3/4 (base32, URL-encoded, reversed still pass) |
+| sharded exfiltration | 3/3 -> 1/3 | 4/4 -> 2/4 (first fragments leave before a pattern forms) |
+| filename-token collision | 3/3 -> 0/3 | 1/4 -> 0/4 |
+| obfuscated SQL | 4/4 -> 0/4 | 2/5 -> 0/5 |
+| total (ASR) | 13/13 (100%) -> 1/13 (7.7%) | 11/17 (64.7%) -> 5/17 (29.4%) |
+
+All benign controls in both halves were still allowed.
+
+Cost on the older sets (same author, run after the changes): attack success did not rise anywhere, but
+the stricter SCOPE-005 sends more legitimate tasks to review. Generated sets: review friction about 1.8-2.3%
+before, 4.1-4.5% after; task completion 93.2% -> 87.6% (fresh seed 4242) and 95.0% -> 87.5% (seed 2026).
+Core set: completion 95.8% -> 91.7%. The adversarial, adversarial2 and cross-session sets went to 0% ASR,
+but those sets were written to expose the gaps just closed, so that is partly circular.
+
+Still open: other encodings (base32, URL, reversed, split-then-encoded), the first fragments of a sharded
+leak, an agent that uses a fresh agent id to reset cross-session risk, and dynamic or encoded SQL.

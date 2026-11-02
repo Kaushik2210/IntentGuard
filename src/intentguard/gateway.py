@@ -108,8 +108,7 @@ class Gateway:
             classification=self.catalog.classify(res) if res else Classification.PUBLIC,
             destination=dest, trust=self.catalog.trust_of(dest) if dest else None, args=args)
         if tool.op == Op.QUERY:  # classify the tables a query touches, not just the tool
-            req.tables = re.findall(r"\b(?:from|join|into|update|table)\s+([A-Za-z_][A-Za-z0-9_]*)",
-                                    str(args.get("sql", "")), re.I)
+            req.tables = self._tables(str(args.get("sql", "")))
             if req.tables:
                 req.classification = max(self.catalog.table_class(t) for t in req.tables)
             if re.search(r"\b(drop|delete|truncate|alter|update|insert)\b", str(args.get("sql", "")), re.I):
@@ -125,6 +124,19 @@ class Gateway:
         if d.decision == Verdict.REVIEW:
             self.pending[req.action_id] = (s, tool, args)
         return Result(d)
+
+    def _tables(self, sql: str) -> list[str]:
+        """Tables a query touches. Comments, string literals and quoting are stripped first; a table is
+        found after FROM/JOIN/INTO/UPDATE/TABLE (schema prefix dropped, comma lists followed), and any
+        known catalog table named anywhere in the text counts too, which covers subqueries, UNION and
+        WITH. Over-approximate on purpose. Not a SQL parser: dynamic or encoded SQL is not handled."""
+        s = re.sub(r"/\*.*?\*/|--[^\n]*|'[^']*'", " ", sql, flags=re.S)
+        s = re.sub(r"[`\"\[\]]", "", s)
+        found = []
+        for m in re.finditer(r"\b(?:from|join|into|update|table)\s+([\w.]+(?:\s*,\s*[\w.]+)*)", s, re.I):
+            found += [x.strip().rsplit(".", 1)[-1] for x in m.group(1).split(",")]
+        found += [t for t in re.findall(r"[A-Za-z_]\w*", s) if t.lower() in self.catalog.tables]
+        return list(dict.fromkeys(f for f in found if f and f.lower() not in ("select", "values")))
 
     def approve(self, action_id: str, approver: str) -> Any:
         s, tool, args = self.pending.pop(action_id)

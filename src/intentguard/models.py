@@ -112,3 +112,4 @@ class Session:
     denied: int = 0
     quarantined: bool = False
     caps: Capabilities = field(default_factory=Capabilities)
+    outbound: str = ""  # recent outbound text, so a secret split across several sends is still seen

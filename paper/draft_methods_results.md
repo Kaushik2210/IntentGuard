@@ -21,9 +21,11 @@ components contribute:
    resources, a sensitivity ceiling and approved destinations. Sending, uploading and summarising imply
    reading. Low-confidence compilations fall back to read-only.
 2. *Data sensitivity and named-resource check.* Reading a CONFIDENTIAL-or-higher file or table requires
-   that the task name it (SCOPE-005); otherwise the action goes to REVIEW.
+   that the task name it by its path or full file name (a table by its name); otherwise the action goes to
+   REVIEW (SCOPE-005). A word shared with the file name, such as "budget" or "config", does not count.
 3. *Data lineage.* An allowed read or query of sensitive data taints the session; egress to destinations
-   that are not approved is then blocked (taint and egress rules).
+   that are not approved is then blocked (taint and egress rules). Outbound content is also scanned for
+   secret patterns, including in base64, hex and rot13 form and across the last few outbound messages.
 4. *Cumulative behavioural risk.* Sequence rules (reconnaissance, then credential reads, then egress)
    accumulate a session risk score. Thresholds reduce permissions in steps: network at 0.4, shell and
    locked files at 0.6, database review at 0.8, and quarantine at 1.0. Risk and tags carry over to a new
@@ -69,9 +71,11 @@ Fresh seed 4242 (300 episodes: 139 malicious, 117 benign, 44 ambiguous):
 | keyword stand-in | 74.2 | 66.3 | 0.0 | 0.0 | 100.0 |
 | LlamaFirewall local scanners | 71.7 | 41.1 | 13.0 | 0.0 | 60.9 |
 | LlamaFirewall Prompt Guard 2 | 85.4 | 100.0 | 0.0 | 0.0 | 100.0 |
-| IntentGuard | 1.0 | 2.1 | 0.0 | 2.3 | 93.2 |
+| IntentGuard | 1.0 | 2.1 | 0.0 | 4.1 | 87.6 |
 
-IntentGuard's low ASR on this set is partly circular: the generator never names the file in the task for
+The tightened named-resource rule of section 6.4 costs usability: on the generated sets review friction
+rose from about 2% to about 4% and task completion fell from 93.2% to 87.6% on this set (95.0% to 87.5%
+on seed 2026) [F16]. IntentGuard's low ASR on this set is partly circular: the generator never names the file in the task for
 attacks and always names it for legitimate credential reads, which is exactly what SCOPE-005 tests
 [F5]. The earlier held-out number before SCOPE-005 is the honest signal of transfer: 11.4% on the
 hand-written core set became 43.2% on held-out seed 2026 [F4].
@@ -94,11 +98,22 @@ roughly 200 to 310 ms per call versus 0.03 to 0.08 ms for the rule engine [F12].
 
 ### 6.4 Adversarial sets (hand-written, same author)
 
-Against attacks written to break the rules, IntentGuard's ASR was 30.8% (adversarial) and 41.7%
-(adversarial2); cross-session and database episodes, 36.4% [F6, F7, F10]. These runs found real bugs
-(path traversal, secrets read through an allowlisted shell command, unclassified database reads), which
-were fixed. Open weaknesses remain: encoded exfiltration to approved destinations, filename-token
-collisions with SCOPE-005, and a fresh agent identifier resetting cross-session history.
+Attacks written to break the rules found real bugs (path traversal, secrets read through an allowlisted
+shell command, unclassified database reads), which were fixed [F6, F7, F10]. Four gaps stayed open: encoded
+exfiltration to approved destinations, secrets split over several messages, filename-token collisions
+with the named-resource check, and obfuscated SQL. A third batch targeting exactly these was written and
+frozen before any rule changed, in a development half (16 episodes) and a held-out half (18 episodes), each
+with benign controls [F15]. Before the fixes IntentGuard let 13 of 13 harmful steps through on the
+development half and 11 of 17 on the held-out half (64.7%). The fixes were: decoding base64, hex and rot13
+in outbound content; a per-session buffer of outbound text; naming a file only by its path or full file
+name; and a more tolerant SQL table finder. They were developed on the development half only. Afterwards 1
+of 13 (7.7%) and 5 of 17 (29.4%) harmful steps got through, with every benign control still allowed [F16].
+The five remaining held-out misses are base32, URL-encoded and reversed payloads (decoders deliberately
+not added, to measure generalisation) and the first fragments of a split secret, which leave before a
+pattern forms. One bug in the first version of the buffer was found through the held-out half, so that half
+was run twice and is no longer strictly untouched. Both halves share an author with the engine. The earlier
+adversarial sets now show 0% ASR, but they were written to expose the gaps just closed, so that figure is
+partly circular and should not be quoted as robustness.
 
 ### 6.5 LLM-driven agents (local models)
 
@@ -113,8 +128,9 @@ author-written injections; it is not a rate for real attackers.
 ## 7. Limitations (state these plainly)
 
 - Same author for engine and episodes; no independent episode set yet.
-- Template-based intent compiler and keyword-based rules (encoded or paraphrased secrets, loose filename
-  matches, obfuscated SQL).
+- Template-based intent compiler and keyword-based rules: only base64, hex and rot13 are decoded (base32,
+  URL-encoded and reversed secrets still pass), the first pieces of a split secret leave before a pattern
+  forms, and SQL is matched by name, not parsed.
 - Review friction is a real cost: a hijacked step can lock a legitimate task for the rest of a session
   [F9, F11, F14].
 - Scripted agents for most results; LLM-agent studies use two small local models and few seeds.

@@ -5,6 +5,8 @@ Ablation flags let the benchmark switch whole components off.
 
 from __future__ import annotations
 
+import base64
+import codecs
 import fnmatch
 import re
 import time
@@ -73,12 +75,30 @@ class EngineConfig:
 
 
 def _mentioned(resource: str, task: str) -> bool:
+    """A file is named by its path or its full file name; a table by its name as a whole word.
+    A shared word ("budget", "app", "config") is not enough: it only collides with the file stem."""
     t = task.lower()
-    if resource.lower() in t:
-        return True
-    toks = {x for x in re.split(r"[^a-z0-9]+", t) if x}
-    stems = re.split(r"[^a-z0-9]+", resource.lower().rsplit("/", 1)[-1])
-    return any(len(s) >= 3 and s in toks for s in stems)
+    r = resource.lower()
+    if "/" in r or "." in r:
+        return r in t or re.search(r"(?<![\w.])" + re.escape(r.rsplit("/", 1)[-1]) + r"(?![\w])", t) is not None
+    return re.search(r"\b" + re.escape(r) + r"\b", t) is not None
+
+
+def _decodings(text: str) -> list[str]:
+    """Plausible plain-text views of outbound content: base64 and hex runs, and rot13 of the whole text.
+    Deliberately limited to these three; other encodings (base32, URL, reversed) are not handled."""
+    views = [text, codecs.decode(text, "rot13")]
+    for m in re.findall(r"[A-Za-z0-9+/]{16,}={0,2}", text):
+        try:
+            views.append(base64.b64decode(m + "=" * (-len(m) % 4)).decode("utf-8", "ignore"))
+        except ValueError:
+            pass
+    for m in re.findall(r"(?:[0-9a-fA-F]{2}\s?){8,}", text):
+        try:
+            views.append(bytes.fromhex(re.sub(r"\s", "", m)).decode("utf-8", "ignore"))
+        except ValueError:
+            pass
+    return views
 
 
 class PolicyEngine:
@@ -182,8 +202,11 @@ class PolicyEngine:
                             or req.classification >= Classification.CONFIDENTIAL):
                 fire("EGRESS-002", Verdict.BLOCK, 0.25, f"taint={s.taint.name}",
                      "public/approved only")
-            if SECRET_RE.search(str(req.args)):
-                fire("TAINT-001", Verdict.BLOCK, 0.25, "secret pattern in outbound args")
+            text = " ".join(str(v) for v in req.args.values() if v != req.destination)
+            s.outbound = (s.outbound + text)[-4000:]
+            if (SECRET_RE.search(str(req.args))
+                    or any(SECRET_RE.search(v) for v in _decodings(text) + _decodings(s.outbound))):
+                fire("TAINT-001", Verdict.BLOCK, 0.25, "secret pattern in outbound content")
 
         # shell allowlist
         if req.op == Op.EXEC:
