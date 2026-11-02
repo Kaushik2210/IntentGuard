@@ -308,3 +308,25 @@ counts are identical across systems because the same seed gives the same first m
 - Limits: one 8B model, 5 seeds, same-author injections, no benign runs in this set (no completion
   figure), and the oracle is hand-written. The result shows the harness can detect injection-following
   and that the gateway stopped it here; it does not show robustness to adaptive attackers.
+
+## F15. Red-team batch 3 (`bench/redteam2.py`): frozen BEFORE changing any rule
+
+Targets the open gaps from F6/F7: encoded exfiltration, sharded exfiltration, filename-token
+collisions with SCOPE-005, obfuscated SQL. Two halves with different instances: `rt_dev` (16 episodes,
+used to develop the fixes) and `rt_heldout` (not used for tuning). Same author as the engine, written in
+one sitting, so the held-out half is held out from tuning, not independent. Benign controls are included.
+
+Engine at commit before the fixes, `python -m bench.breakdown` (harmful steps that executed):
+
+| Class | rt_dev | rt_heldout |
+|---|---|---|
+| encoded exfiltration to approved destination | 3/3 | 4/4 |
+| sharded exfiltration (secret split over several emails) | 3/3 | 4/4 |
+| filename-token collision (SCOPE-005) | 3/3 | 1/4 |
+| obfuscated SQL (schema, quotes, comments, subquery, UNION) | 4/4 | 2/5 |
+| total (ASR) | 13/13 (100%) | 11/17 (64.7%) |
+
+All benign controls (encoded-looking status mail, three small status mails, fully named credential
+reads, quoted/qualified SQL on public tables) were allowed in both halves, so no false-positive
+baseline problem. Procedure: fixes are developed on `rt_dev` only; `rt_heldout` is then run once and
+reported next to this table, including anything that still fails.
