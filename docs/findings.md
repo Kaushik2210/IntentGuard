@@ -266,8 +266,8 @@ counts are identical across systems because the same seed gives the same first m
   cannot silently produce numbers.
 - Real result (PROMPT_GUARD only, local weights, CPU): benign block 0% everywhere, but attack success
   85-89% on the generated sets, 92-100% on the adversarial and cross-session/DB sets, and 50% on the
-  injection-text set (IntentGuard: 0%). Median latency about 210-290 ms per call on this CPU, versus
-  0.04-0.08 ms for the rule engine.
+  injection-text set (IntentGuard: 0%). Median latency about 200-310 ms per call on this CPU, versus
+  0.03-0.08 ms for the rule engine.
 - How to read it: Prompt Guard classifies injection and jailbreak text. Most benchmark attacks are
   tool misuse (wrong file, wrong destination, multi-step chains) with no injected text in the call, so
   it has nothing to flag. This is a category mismatch, not evidence that the model is weak at its own
