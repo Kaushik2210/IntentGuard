@@ -2,7 +2,7 @@
 
 ## Main comparison
 
-**gen_fresh_seed4242**: 300 episodes {'benign': 117, 'ambiguous': 44, 'malicious': 139}, commit `16c062c`
+**gen_fresh_seed4242**: 300 episodes {'benign': 117, 'ambiguous': 44, 'malicious': 139}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
@@ -13,7 +13,7 @@
 | llamafirewall_prompt_guard2 | 85.4 | 100.0 | 0.0 | 0.0 | 100.0 |
 | intentguard_full | 1.0 | 2.1 | 0.0 | 4.1 | 87.6 |
 
-**gen_heldout_seed2026**: 300 episodes {'benign': 119, 'ambiguous': 41, 'malicious': 140}, commit `16c062c`
+**gen_heldout_seed2026**: 300 episodes {'benign': 119, 'ambiguous': 41, 'malicious': 140}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
@@ -24,7 +24,7 @@
 | llamafirewall_prompt_guard2 | 87.7 | 100.0 | 0.0 | 0.0 | 100.0 |
 | intentguard_full | 2.3 | 5.2 | 0.0 | 4.5 | 87.5 |
 
-**adversarial**: 16 episodes {'benign': 0, 'ambiguous': 3, 'malicious': 13}, commit `16c062c`
+**adversarial**: 16 episodes {'benign': 0, 'ambiguous': 3, 'malicious': 13}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
@@ -35,7 +35,7 @@
 | llamafirewall_prompt_guard2 | 92.3 | 100.0 | 0.0 | 0.0 | 100.0 |
 | intentguard_full | 0.0 | 0.0 | 0.0 | 50.0 | 0.0 |
 
-**adversarial2**: 15 episodes {'benign': 0, 'ambiguous': 3, 'malicious': 12}, commit `16c062c`
+**adversarial2**: 15 episodes {'benign': 0, 'ambiguous': 3, 'malicious': 12}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
@@ -46,7 +46,7 @@
 | llamafirewall_prompt_guard2 | 100.0 | 100.0 | 0.0 | 0.0 | 100.0 |
 | intentguard_full | 0.0 | 0.0 | 0.0 | 0.0 | 100.0 |
 
-**injection_text**: 14 episodes {'benign': 0, 'ambiguous': 4, 'malicious': 10}, commit `16c062c`
+**injection_text**: 14 episodes {'benign': 0, 'ambiguous': 4, 'malicious': 10}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
@@ -57,7 +57,7 @@
 | llamafirewall_prompt_guard2 | 50.0 | 50.0 | 0.0 | 0.0 | 50.0 |
 | intentguard_full | 0.0 | 0.0 | 0.0 | 100.0 | 50.0 |
 
-**xsession_db**: 12 episodes {'benign': 0, 'ambiguous': 5, 'malicious': 7}, commit `16c062c`
+**xsession_db**: 12 episodes {'benign': 0, 'ambiguous': 5, 'malicious': 7}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
@@ -70,7 +70,7 @@
 
 ## Ablations
 
-**gen_fresh_seed4242**: 300 episodes {'benign': 117, 'ambiguous': 44, 'malicious': 139}, commit `16c062c`
+**gen_fresh_seed4242**: 300 episodes {'benign': 117, 'ambiguous': 44, 'malicious': 139}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
@@ -81,7 +81,7 @@
 | ablate_no_behaviour | 6.1 | 12.6 | 0.0 | 4.1 | 87.6 |
 | ablate_no_dataflow | 8.1 | 16.8 | 0.0 | 4.1 | 87.6 |
 
-**gen_heldout_seed2026**: 300 episodes {'benign': 119, 'ambiguous': 41, 'malicious': 140}, commit `16c062c`
+**gen_heldout_seed2026**: 300 episodes {'benign': 119, 'ambiguous': 41, 'malicious': 140}, commit `a36fd6f`
 
 | System | ASR % | Exfil % | Benign blocked % | Review friction % | Task completion % |
 |---|---|---|---|---|---|
