@@ -448,3 +448,23 @@ gap, not a tuning mistake, and relaxing the rule would reopen the attack. What w
 reopening it is on the approval side, not the rule side: remember an approval for the rest of the session
 (not built), or let the user grant a file explicitly when starting the task (the grants already support it).
 Neither is evaluated.
+
+## F20. Approval memory: safe, but no measured benefit on the existing sets
+
+Change: when a human approves a REVIEW, the gateway remembers it for that session, but only for two rules and
+only for the exact object approved: EGRESS-001 for that recipient and SCOPE-005 for that file or table. It never
+touches a block, never carries to another session, and an approved sensitive read is still fingerprinted, so its
+content cannot leave (TAINT-002). Tests: `tests/test_approval_memory.py` (7). Switch: `EngineConfig(approval_memory=False)`.
+
+Measurement (`python -m bench.approvals`): every episode is replayed with a simulated human who approves a
+REVIEW only for steps the benchmark labels clean, which is the best case for the memory.
+- On all twelve existing sets (core, seq, three generated, adversarial x2, cross-session, four red-team halves)
+  the number of review prompts is identical with and without memory, and the number of harmful steps that
+  executed is identical too. The episodes are short and contain at most one review each, so there is nothing
+  to remember.
+- On two sessions I constructed to contain repeats (three emails to the same new recipient; three reads of the
+  same loosely named config file) prompts fall from 6 to 2 with no harmful step added. This is an illustration
+  of the mechanism, written to contain repeats; it is not evidence of a saving on real workloads.
+
+Reading: the feature is safe by construction and by test, but its value is unmeasured. It should be described as
+a design option, not as a result, until a workload with repeated reviews (real or independently written) exists.

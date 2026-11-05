@@ -71,7 +71,7 @@ class Gateway:
         self.engine = engine or PolicyEngine()
         self.audit = audit or AuditLog()
         self.sessions: dict[str, Session] = {}
-        self.pending: dict[str, tuple[Session, Tool, dict, Classification]] = {}
+        self.pending: dict[str, tuple[Session, Tool, dict, Classification, ActionRequest, Decision]] = {}
         self.memory: dict[str, dict] = {}  # per-agent risk and tags carried across sessions
 
     def open_session(self, session_id: str, agent_id: str, scope: TaskScope) -> GatewayClient:
@@ -122,7 +122,7 @@ class Gateway:
         if d.decision == Verdict.ALLOW:
             return Result(d, self._run(s, tool, args, req.classification))
         if d.decision == Verdict.REVIEW:
-            self.pending[req.action_id] = (s, tool, args, req.classification)
+            self.pending[req.action_id] = (s, tool, args, req.classification, req, d)
         return Result(d)
 
     def _tables(self, sql: str) -> list[str]:
@@ -139,8 +139,13 @@ class Gateway:
         return list(dict.fromkeys(f for f in found if f and f.lower() not in ("select", "values")))
 
     def approve(self, action_id: str, approver: str) -> Any:
-        s, tool, args, cls = self.pending.pop(action_id)
+        s, tool, args, cls, req, d = self.pending.pop(action_id)
         self.audit.append({"event": "approved", "action": action_id, "by": approver})
+        # remember only the two rules whose point is to ask once about a recipient or a file
+        if "EGRESS-001" in d.fired_rules and req.destination:
+            s.approved.add(("EGRESS-001", req.destination))
+        if "SCOPE-005" in d.fired_rules:
+            s.approved.update(("SCOPE-005", n) for n in ([req.resource] if req.resource else req.tables))
         return self._run(s, tool, args, cls)
 
     def reject(self, action_id: str, approver: str) -> None:

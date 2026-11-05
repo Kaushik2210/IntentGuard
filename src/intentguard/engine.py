@@ -76,6 +76,7 @@ class EngineConfig:
     mention_check: bool = True  # CONFIDENTIAL+ reads must be referenced by the task text
     lineage: bool = True  # outbound content that contains sensitive data read in this session
     lineage_k: int = 12  # shortest run of letters/digits that counts as a match
+    approval_memory: bool = True  # a human approval of one recipient or file is remembered for the session
 
 
 def _mentioned(resource: str, task: str) -> bool:
@@ -226,7 +227,8 @@ class PolicyEngine:
             names = [req.resource] if req.op == Op.READ and req.resource else (
                 req.tables if req.op == Op.QUERY else [])
             if (cfg.mention_check and names and req.classification >= Classification.CONFIDENTIAL
-                    and not any(_mentioned(n, sc.task_text) for n in names)):
+                    and not any(_mentioned(n, sc.task_text) for n in names)
+                    and not (cfg.approval_memory and all(("SCOPE-005", n) in s.approved for n in names))):
                 fire("SCOPE-005", Verdict.REVIEW, 0.2, ",".join(names), "named in the task")
 
         # destination trust + data flow
@@ -234,7 +236,8 @@ class PolicyEngine:
             allowed_dest = any(fnmatch.fnmatch(req.destination, g) for g in sc.allowed_destinations)
             if req.trust == Trust.DENYLISTED:
                 fire("EGRESS-003", Verdict.BLOCK, 0.2, req.destination)
-            elif req.trust == Trust.UNKNOWN and not allowed_dest:
+            elif (req.trust == Trust.UNKNOWN and not allowed_dest
+                  and not (cfg.approval_memory and ("EGRESS-001", req.destination) in s.approved)):
                 fire("EGRESS-001", Verdict.REVIEW, 0.1, req.destination)
         if cfg.dataflow and is_egress:
             leaving = req.trust not in (Trust.LOCAL, Trust.APPROVED)
