@@ -259,6 +259,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--task", required=True, help="the user's task, which defines what the agent may do")
     ap.add_argument("--grants", required=True, help="JSON file or inline JSON: resources, destinations, ceiling")
     ap.add_argument("--demo", action="store_true", help="serve the mock tools (synthetic data)")
+    ap.add_argument("--extra-docs", help="demo mode: JSON file {path: text} of extra synthetic documents (INTERNAL)")
     ap.add_argument("--upstream", help="command that starts the MCP server to protect")
     ap.add_argument("--config", help="JSON file mapping upstream tools to operations (proxy mode)")
     ap.add_argument("--agent-id", default="mcp-client")
@@ -272,6 +273,10 @@ def main(argv: list[str] | None = None) -> None:
         ap.error("choose exactly one of --demo or --upstream")
     audit = AuditLog(a.audit_file)
     if a.demo:
+        if a.extra_docs:  # e.g. a poisoned document for demos; must be loaded before the catalog is built
+            from . import mock_env
+            for path, body in _load(a.extra_docs).items():
+                mock_env.FILES[path] = (body, Classification.INTERNAL)
         env = MockEnv()
         gw, exposed = Gateway(env.tools(), env.catalog(), PolicyEngine(), audit), DEMO_TOOLS
     else:
