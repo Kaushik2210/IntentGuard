@@ -24,8 +24,11 @@ components contribute:
    that the task name it by its path or full file name (a table by its name); otherwise the action goes to
    REVIEW (SCOPE-005). A word shared with the file name, such as "budget" or "config", does not count.
 3. *Data lineage.* An allowed read or query of sensitive data taints the session; egress to destinations
-   that are not approved is then blocked (taint and egress rules). Outbound content is also scanned for
-   secret patterns, including in base64, hex and rot13 form and across the last few outbound messages.
+   that are not approved is then blocked (taint and egress rules). Outbound content is scanned for secret
+   patterns, and also compared with fingerprints of the sensitive data the session actually read (runs of 12
+   letters and digits), after decoding rot13, reversal, URL encoding and base64, base32 and hex up to two
+   levels, and across the last few outbound messages. A match on credentials is blocked and a match on other
+   confidential data goes to human review (rule TAINT-002).
 4. *Cumulative behavioural risk.* Sequence rules (reconnaissance, then credential reads, then egress)
    accumulate a session risk score. Thresholds reduce permissions in steps: network at 0.4, shell and
    locked files at 0.6, database review at 0.8, and quarantine at 1.0. Risk and tags carry over to a new
@@ -110,10 +113,22 @@ name; and a more tolerant SQL table finder. They were developed on the developme
 of 13 (7.7%) and 5 of 17 (29.4%) harmful steps got through, with every benign control still allowed [F16].
 The five remaining held-out misses are base32, URL-encoded and reversed payloads (decoders deliberately
 not added, to measure generalisation) and the first fragments of a split secret, which leave before a
-pattern forms. One bug in the first version of the buffer was found through the held-out half, so that half
+pattern forms; the wider decoders and the lineage check added later (see below) leave 1 of 17 (5.9%) on that
+half [F18]. One bug in the first version of the buffer was found through the held-out half, so that half
 was run twice and is no longer strictly untouched. Both halves share an author with the engine. The earlier
 adversarial sets now show 0% ASR, but they were written to expose the gaps just closed, so that figure is
 partly circular and should not be quoted as robustness.
+
+A fourth batch (development half of 13 harmful steps, held-out half of 13, each with benign controls) was
+frozen before the content-lineage check of section 3 existed [F17]. Before it, IntentGuard let 10 of 13
+(76.9%) and 9 of 13 (69.2%) harmful steps through. After it, 1 of 13 (7.7%) and 4 of 13 (30.8%) [F18]. With
+lineage switched off but the wider decoders left on, 6 of 13 (46.2%) on both halves, so lineage itself
+accounts for roughly 40 and 15 percentage points. The four held-out misses are a paraphrase and a leetspeak
+rewrite (included on purpose as expected limits), a confidential leak with words between the figures that
+breaks the 12-character run, and the first short piece of a split secret. The "held-out" half here holds new
+instances of the same attack classes, written by the same author, so it tests generalisation across
+instances, not across new kinds of attack. No other set changed and every benign control was allowed. A cost
+not measured at scale: legitimate tasks that email confidential figures now go to review.
 
 ### 6.5 LLM-driven agents (local models)
 
@@ -128,9 +143,10 @@ author-written injections; it is not a rate for real attackers.
 ## 7. Limitations (state these plainly)
 
 - Same author for engine and episodes; no independent episode set yet.
-- Template-based intent compiler and keyword-based rules: only base64, hex and rot13 are decoded (base32,
-  URL-encoded and reversed secrets still pass), the first pieces of a split secret leave before a pattern
-  forms, and SQL is matched by name, not parsed.
+- Template-based intent compiler and keyword-based rules. Exfiltration detection looks through simple
+  encodings only: paraphrase, character substitution (leetspeak) and ciphers pass, short first pieces of a
+  split secret leave before a match forms, data read in an earlier session is not fingerprinted, and SQL is
+  matched by name, not parsed.
 - Review friction is a real cost: a hijacked step can lock a legitimate task for the rest of a session
   [F9, F11, F14].
 - Scripted agents for most results; LLM-agent studies use two small local models and few seeds.
