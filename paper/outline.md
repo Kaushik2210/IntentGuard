@@ -1,7 +1,8 @@
 # Paper outline (working draft, not for submission)
 
-Working title: Intent-Aware and Behavioural Authorization for Autonomous AI Agents: A Runtime
-Framework for Preventing Unauthorized Tool Execution and Sensitive Data Exfiltration
+Working title: Intent-Aware Authorization for AI Agents
+(Optional subtitle: Reducing Unauthorized Tool Use. The earlier longer title said "Preventing", which the
+results do not support: see `docs/findings.md`.)
 
 Numbers in this file are never typed by hand. Run `python -m bench.run` then
 `python -m bench.paper_tables > paper/tables.md` and cite from that file.

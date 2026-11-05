@@ -8,7 +8,7 @@ You are my engineering partner on **IntentGuard**, which is both (a) an open-sou
 
 ## 1. What IntentGuard is
 
-**Title:** Intent-Aware and Behavioural Authorization for Autonomous AI Agents: A Runtime Framework for Preventing Unauthorized Tool Execution and Sensitive Data Exfiltration.
+**Title:** Intent-Aware Authorization for AI Agents. (The original title was "Intent-Aware and Behavioural Authorization for Autonomous AI Agents: A Runtime Framework for Preventing Unauthorized Tool Execution and Sensitive Data Exfiltration"; shortened, and "Preventing" dropped because the results do not support it.)
 
 **Core question:** Can an agent's tool call be authorized based on the user's original intent, the resources involved, the accumulated risk of earlier actions, and the permissions actually granted?
 

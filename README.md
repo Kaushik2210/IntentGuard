@@ -1,6 +1,7 @@
 # IntentGuard
 
 Intent-aware and behavioural runtime authorization for autonomous AI agents. Research prototype.
+Paper working title: *Intent-Aware Authorization for AI Agents*.
 
 Every tool call goes through a gateway that decides ALLOW / REVIEW / BLOCK / QUARANTINE using
 deterministic rules over: the user's task scope, resource classification, destination trust,
