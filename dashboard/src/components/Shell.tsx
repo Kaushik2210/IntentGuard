@@ -13,7 +13,7 @@ const NAV = [
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  const { data } = usePoll<Stats>("/stats", 3000);
+  const { data, error } = usePoll<Stats>("/stats", 3000);
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       <aside className="flex shrink-0 items-center gap-1 border-b border-line bg-panel px-3 py-2 md:w-56 md:flex-col md:items-stretch md:border-b-0 md:border-r md:px-3 md:py-4">
@@ -35,7 +35,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               >
                 <Icon size={15} />
                 {label}
-                {href === "/approvals" && !!data?.pending && (
+                {href === "/approvals" && !error && !!data?.pending && (
                   <span className="ml-auto rounded-full bg-review px-1.5 font-mono text-[11px] text-black">{data.pending}</span>
                 )}
               </Link>
