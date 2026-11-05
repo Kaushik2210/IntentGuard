@@ -1,0 +1,248 @@
+"""An MCP server that puts IntentGuard in front of tools (standard library only).
+
+Two modes, both over the stdio transport (newline-delimited JSON-RPC 2.0):
+
+    python -m intentguard.mcp_gateway --demo --task "Read research/paper.pdf and summarize it." --grants grants.json
+    python -m intentguard.mcp_gateway --upstream "python some_mcp_server.py" --config proxy.json \\
+        --task "..." --grants grants.json
+
+Demo mode serves the mock tools (synthetic data). Proxy mode starts an existing MCP server as a child process
+and re-exposes only the tools named in the config; each call is authorized by the policy engine before it is
+forwarded. A tool that is not in the config is not listed, and a call to it is blocked and audited (fail closed).
+
+Implemented: initialize, notifications/initialized, ping, tools/list, tools/call. Not implemented: resources,
+prompts, sampling, HTTP transport, pagination, list-changed notifications. A call that needs human approval
+(REVIEW) is reported to the model as not executed; there is no approval channel over stdio, so approvals need
+the HTTP service and dashboard.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import queue
+import shlex
+import subprocess
+import sys
+import threading
+from typing import Any, TextIO
+
+from .audit import AuditLog
+from .client import InProcessSession, Session, ToolResult
+from .engine import PolicyEngine
+from .gateway import Catalog, Gateway, Tool
+from .mock_env import MockEnv
+from .models import Classification, Op, Trust
+from .scope import compile_scope
+
+SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
+SERVER_INFO = {"name": "intentguard-gateway", "version": "0.1.0"}
+
+
+def _schema(props: dict[str, str], required: list[str]) -> dict:
+    return {"type": "object", "properties": {k: {"type": "string", "description": v} for k, v in props.items()},
+            "required": required}
+
+
+# Tool descriptors served in demo mode (names match the mock tools).
+DEMO_TOOLS = [
+    {"name": "read_file", "description": "Read a file by path", "inputSchema": _schema({"path": "File path"}, ["path"])},
+    {"name": "search_files", "description": "Search files for text",
+     "inputSchema": _schema({"query": "Text to search for"}, ["query"])},
+    {"name": "send_email", "description": "Send an email",
+     "inputSchema": _schema({"to": "Recipient", "body": "Message body", "attachment": "Optional file to attach"},
+                            ["to", "body"])},
+    {"name": "upload", "description": "Upload data to a URL",
+     "inputSchema": _schema({"url": "Destination URL", "data": "Data to upload"}, ["url", "data"])},
+    {"name": "run_shell", "description": "Run a shell command", "inputSchema": _schema({"cmd": "Command"}, ["cmd"])},
+    {"name": "db_query", "description": "Run a database query", "inputSchema": _schema({"sql": "SQL"}, ["sql"])},
+]
+
+
+def _text(output: Any) -> str:
+    return output if isinstance(output, str) else json.dumps(output, default=str)
+
+
+class McpGateway:
+    """Speaks MCP to a client and authorizes each tool call through an IntentGuard session."""
+
+    def __init__(self, session: Session, tools: list[dict]):
+        self.session = session
+        self.tools = tools
+        self.calls: list[ToolResult] = []
+
+    # -- protocol ---------------------------------------------------------------
+    def handle(self, msg: dict) -> dict | None:
+        method, mid = msg.get("method"), msg.get("id")
+        if mid is None:  # notification: no response
+            return None
+        try:
+            if method == "initialize":
+                want = (msg.get("params") or {}).get("protocolVersion")
+                return self._ok(mid, {"protocolVersion": want if want in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0],
+                                      "capabilities": {"tools": {"listChanged": False}},
+                                      "serverInfo": SERVER_INFO,
+                                      "instructions": "Every tool call is authorized by IntentGuard against the "
+                                                      "user's task before it runs."})
+            if method == "ping":
+                return self._ok(mid, {})
+            if method == "tools/list":
+                return self._ok(mid, {"tools": self.tools})
+            if method == "tools/call":
+                p = msg.get("params") or {}
+                if not isinstance(p.get("name"), str):
+                    return self._err(mid, -32602, "tools/call needs a tool name")
+                return self._ok(mid, self._call(p["name"], p.get("arguments") or {}))
+            return self._err(mid, -32601, f"method not found: {method}")
+        except Exception as exc:  # never leave a request unanswered
+            return self._err(mid, -32603, f"internal error: {exc}")
+
+    def _call(self, name: str, args: dict) -> dict:
+        res = self.session.call(name, **args)
+        self.calls.append(res)
+        if res.allowed:
+            return {"content": [{"type": "text", "text": _text(res.output)}], "isError": False}
+        return {"content": [{"type": "text", "text": res.message()}], "isError": True}
+
+    @staticmethod
+    def _ok(mid: Any, result: dict) -> dict:
+        return {"jsonrpc": "2.0", "id": mid, "result": result}
+
+    @staticmethod
+    def _err(mid: Any, code: int, message: str) -> dict:
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
+
+    # -- transport --------------------------------------------------------------
+    def serve(self, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> None:
+        for line in stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                out = self._err(None, -32700, "parse error")
+            else:
+                out = self.handle(msg) if isinstance(msg, dict) else self._err(None, -32600, "invalid request")
+            if out is not None:
+                stdout.write(json.dumps(out) + "\n")
+                stdout.flush()
+
+
+# -- proxy mode: wrap an existing MCP server ----------------------------------------
+class StdioUpstream:
+    """Minimal MCP client for a child process (initialize, tools/list, tools/call)."""
+
+    def __init__(self, command: list[str], timeout: float = 30.0):
+        self.timeout = timeout
+        self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                     text=True, bufsize=1)
+        self._q: queue.Queue = queue.Queue()
+        self._n = 0
+        threading.Thread(target=self._pump, daemon=True).start()
+        self._request("initialize", {"protocolVersion": SUPPORTED_VERSIONS[1], "capabilities": {},
+                                     "clientInfo": {"name": "intentguard-proxy", "version": "0.1.0"}})
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def _pump(self) -> None:
+        assert self.proc.stdout
+        for line in self.proc.stdout:
+            try:
+                self._q.put(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    def _send(self, msg: dict) -> None:
+        assert self.proc.stdin
+        self.proc.stdin.write(json.dumps(msg) + "\n")
+        self.proc.stdin.flush()
+
+    def _request(self, method: str, params: dict) -> dict:
+        self._n += 1
+        mid = self._n
+        self._send({"jsonrpc": "2.0", "id": mid, "method": method, "params": params})
+        while True:
+            try:
+                msg = self._q.get(timeout=self.timeout)
+            except queue.Empty as exc:
+                raise TimeoutError(f"upstream did not answer {method}") from exc
+            if msg.get("id") == mid:
+                if "error" in msg:
+                    raise RuntimeError(f"upstream error: {msg['error']}")
+                return msg["result"]
+
+    def list_tools(self) -> list[dict]:
+        return self._request("tools/list", {})["tools"]
+
+    def call_tool(self, name: str, args: dict) -> str:
+        res = self._request("tools/call", {"name": name, "arguments": args})
+        text = "\n".join(c.get("text", "") for c in res.get("content", []) if c.get("type") == "text")
+        if res.get("isError"):
+            raise RuntimeError(text or "upstream tool error")
+        return text
+
+    def close(self) -> None:
+        self.proc.terminate()
+
+
+def build_proxy(upstream: Any, config: dict) -> tuple[Gateway, list[dict]]:
+    """Gateway whose tools forward to `upstream`. `config`:
+
+        {"tools":   {"read_note": {"op": "read", "resource_arg": "path"},
+                     "send":      {"op": "send", "dest_arg": "to", "resource_arg": "attachment"}},
+         "classes": {"notes/a.txt": "CONFIDENTIAL"},   # resource -> PUBLIC|INTERNAL|CONFIDENTIAL|SECRET (default INTERNAL)
+         "trust":   {"bob@example.org": "approved"},     # destination -> local|approved|unknown|denylisted
+         "tables":  {"salaries": "CONFIDENTIAL"}}
+    Only upstream tools named under "tools" are exposed.
+    """
+    mapping = config.get("tools", {})
+    listed = {t["name"]: t for t in upstream.list_tools()}
+    tools: list[Tool] = []
+    exposed: list[dict] = []
+    for name, spec in mapping.items():
+        if name not in listed:
+            continue
+
+        def fn(_name: str = name, **kw: Any) -> str:
+            return upstream.call_tool(_name, kw)
+
+        tools.append(Tool(name, Op(spec["op"]), fn, spec.get("resource_arg"), spec.get("dest_arg")))
+        exposed.append(listed[name])
+    catalog = Catalog({k: Classification[v] for k, v in config.get("classes", {}).items()},
+                      {k: Trust(v) for k, v in config.get("trust", {}).items()},
+                      {k: Classification[v] for k, v in config.get("tables", {}).items()})
+    return Gateway(tools, catalog, PolicyEngine()), exposed
+
+
+def _load(arg: str) -> dict:
+    return json.loads(arg) if arg.lstrip().startswith("{") else json.load(open(arg, encoding="utf-8"))
+
+
+def main(argv: list[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(description="MCP server that authorizes every tool call with IntentGuard")
+    ap.add_argument("--task", required=True, help="the user's task, which defines what the agent may do")
+    ap.add_argument("--grants", required=True, help="JSON file or inline JSON: resources, destinations, ceiling")
+    ap.add_argument("--demo", action="store_true", help="serve the mock tools (synthetic data)")
+    ap.add_argument("--upstream", help="command that starts the MCP server to protect")
+    ap.add_argument("--config", help="JSON file mapping upstream tools to operations (proxy mode)")
+    ap.add_argument("--agent-id", default="mcp-client")
+    ap.add_argument("--audit-file", help="persist the hash-chained audit log here")
+    a = ap.parse_args(argv)
+    if a.demo == bool(a.upstream):
+        ap.error("choose exactly one of --demo or --upstream")
+    audit = AuditLog(a.audit_file)
+    if a.demo:
+        env = MockEnv()
+        gw, exposed = Gateway(env.tools(), env.catalog(), PolicyEngine(), audit), DEMO_TOOLS
+    else:
+        if not a.config:
+            ap.error("--upstream needs --config")
+        gw, exposed = build_proxy(StdioUpstream(shlex.split(a.upstream)), _load(a.config))
+        gw.audit = audit
+    session = InProcessSession(gw.open_session("mcp", a.agent_id, compile_scope(a.task, _load(a.grants))))
+    print("intentguard MCP gateway ready", file=sys.stderr)
+    McpGateway(session, exposed).serve()
+
+
+if __name__ == "__main__":
+    main()

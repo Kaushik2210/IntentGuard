@@ -51,6 +51,31 @@ agent = create_agent(model, guarded_tools(session))
 `--poison` to add forceful injected documents and `--unprotected` for the same agent without the gateway.
 `tests/test_langchain.py` drives the loop with a scripted model so CI stays deterministic.
 
+## MCP gateway
+
+`intentguard.mcp_gateway` is an MCP server (stdio, standard library only) that authorizes every `tools/call`
+against the user's task before it runs. A blocked call comes back as an MCP error result with the reason.
+
+```bash
+# demo tools (synthetic data)
+python -m intentguard.mcp_gateway --demo --task "Read research/paper.pdf and summarize it." --grants grants.json
+
+# protect an existing MCP server: only the tools named in proxy.json are exposed and forwarded
+python -m intentguard.mcp_gateway --upstream "python my_server.py" --config proxy.json \
+    --task "Read notes/a.txt and email bob@x.org the summary" --grants grants.json --audit-file audit.jsonl
+```
+
+`proxy.json` maps each upstream tool to an operation and says which argument is the resource and the
+destination, plus optional `classes` (resource sensitivity), `trust` (destination trust) and `tables`. A tool that
+is not listed is never shown to the client, and a call to it is blocked and audited. Point an MCP host
+(Claude Desktop, Cursor, an agent SDK) at the command above instead of at the real server.
+
+Implemented: initialize, ping, tools/list, tools/call. Not implemented: resources, prompts, sampling, the HTTP
+transport, and an approval channel (a REVIEW result is reported as not executed; approvals need the HTTP
+service and dashboard). Checked against the official `mcp` Python SDK client (2.3.0): initialize, list and
+call, including a blocked call, work. `tests/test_mcp_gateway.py` covers the protocol, the stdio process, and
+proxying a real child MCP server, including that a blocked call never reaches the upstream.
+
 ## Dashboard (demo)
 
 ```
