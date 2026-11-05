@@ -26,6 +26,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from typing import Any, TextIO
 
 from .audit import AuditLog
@@ -33,7 +34,8 @@ from .client import InProcessSession, Session, ToolResult
 from .engine import PolicyEngine
 from .gateway import Catalog, Gateway, Tool
 from .mock_env import MockEnv
-from .models import Classification, Op, Trust, Verdict
+from .models import ActionRequest, Classification, Decision, Op, Trust, Verdict
+from .models import Session as PolicySession
 from .scope import compile_scope
 
 SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
@@ -62,6 +64,13 @@ DEMO_TOOLS = [
 
 def _text(output: Any) -> str:
     return output if isinstance(output, str) else json.dumps(output, default=str)
+
+
+class _AllowAll:
+    """Demo-only comparison baseline (`--no-policy`): every call is allowed. Never use for real tools."""
+
+    def evaluate(self, req: ActionRequest, s: PolicySession) -> Decision:
+        return Decision(req.action_id, Verdict.ALLOW, 0.0, [], [], "no policy", "allow", replace(s.caps))
 
 
 class McpGateway:
@@ -225,7 +234,8 @@ def build_proxy(upstream: Any, config: dict) -> tuple[Gateway, list[dict]]:
     """Gateway whose tools forward to `upstream`. `config`:
 
         {"tools":   {"read_note": {"op": "read", "resource_arg": "path"},
-                     "send":      {"op": "send", "dest_arg": "to", "resource_arg": "attachment"}},
+                     "send":      {"op": "send", "dest_arg": "to", "resource_arg": "attachment",
+                                   "resource_optional": true}},   # "" or "null" then means no attachment
          "classes": {"notes/a.txt": "CONFIDENTIAL"},   # resource -> PUBLIC|INTERNAL|CONFIDENTIAL|SECRET (default INTERNAL)
          "trust":   {"bob@example.org": "approved"},     # destination -> local|approved|unknown|denylisted
          "tables":  {"salaries": "CONFIDENTIAL"}}
@@ -242,7 +252,8 @@ def build_proxy(upstream: Any, config: dict) -> tuple[Gateway, list[dict]]:
         def fn(_name: str = name, **kw: Any) -> str:
             return upstream.call_tool(_name, kw)
 
-        tools.append(Tool(name, Op(spec["op"]), fn, spec.get("resource_arg"), spec.get("dest_arg")))
+        tools.append(Tool(name, Op(spec["op"]), fn, spec.get("resource_arg"), spec.get("dest_arg"),
+                          spec.get("resource_optional", False)))
         exposed.append(listed[name])
     catalog = Catalog({k: Classification[v] for k, v in config.get("classes", {}).items()},
                       {k: Trust(v) for k, v in config.get("trust", {}).items()},
@@ -263,6 +274,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--upstream", help="command that starts the MCP server to protect")
     ap.add_argument("--config", help="JSON file mapping upstream tools to operations (proxy mode)")
     ap.add_argument("--agent-id", default="mcp-client")
+    ap.add_argument("--no-policy", action="store_true", help="demo only: allow every call (comparison baseline)")
     ap.add_argument("--audit-file", help="persist the hash-chained audit log here")
     ap.add_argument("--approvals-port", type=int, help="serve the approval API and dashboard backend on 127.0.0.1:PORT; "
                                                        "calls that need approval wait for a human")
@@ -278,7 +290,8 @@ def main(argv: list[str] | None = None) -> None:
             for path, body in _load(a.extra_docs).items():
                 mock_env.FILES[path] = (body, Classification.INTERNAL)
         env = MockEnv()
-        gw, exposed = Gateway(env.tools(), env.catalog(), PolicyEngine(), audit), DEMO_TOOLS
+        engine = _AllowAll() if a.no_policy else PolicyEngine()
+        gw, exposed = Gateway(env.tools(), env.catalog(), engine, audit), DEMO_TOOLS
     else:
         if not a.config:
             ap.error("--upstream needs --config")

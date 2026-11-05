@@ -164,3 +164,24 @@ def test_destructive_sql_is_a_write_not_a_query():
     _, _, c = setup("Query the database for experiment results", {**GRANTS, "ops": ["query", "read"]})
     r = c.call("db_query", sql="DROP TABLE experiments")
     assert r.decision.decision == Verdict.BLOCK and "SCOPE-002" in r.decision.fired_rules
+
+
+def test_empty_optional_attachment_is_not_judged_as_a_path():
+    env, _, c = setup("Summarize research/notes.md and email my advisor",
+                      {**GRANTS, "destinations": ["advisor@university.edu"]})
+    for value in ("", "null", "None", "  "):
+        r = c.call("send_email", to="advisor@university.edu", body="summary", attachment=value)
+        assert r.decision.decision == Verdict.ALLOW, value
+    assert all(m["attachment"] is None for m in env.outbox)  # the tool never saw the placeholder
+
+
+def test_real_attachment_is_still_checked():
+    env, _, c = setup("Summarize research/notes.md and email my advisor",
+                      {**GRANTS, "destinations": ["advisor@university.edu"]})
+    r = c.call("send_email", to="advisor@university.edu", body="x", attachment="secrets/app.env")
+    assert r.decision.decision == Verdict.BLOCK and env.outbox == []
+
+
+def test_empty_required_path_still_fails_closed():
+    _, _, c = setup()
+    assert c.call("read_file", path="").decision.decision == Verdict.BLOCK

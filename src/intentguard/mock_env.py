@@ -83,7 +83,8 @@ class MockEnv:
         return [
             Tool("read_file", Op.READ, read_file, resource_arg="path"),
             Tool("search_files", Op.READ, search_files),
-            Tool("send_email", Op.SEND, send_email, resource_arg="attachment", dest_arg="to"),
+            Tool("send_email", Op.SEND, send_email, resource_arg="attachment", dest_arg="to",
+                 resource_optional=True),
             Tool("upload", Op.UPLOAD, upload, dest_arg="url"),
             Tool("run_shell", Op.EXEC, run_shell),
             Tool("db_query", Op.QUERY, db_query),

@@ -6,6 +6,7 @@
 
 The agent discovers tools with MCP tools/list and calls them with tools/call. It has no tool handles of its own.
 Open the dashboard (http://localhost:3000/approvals) to approve calls that need a human.
+`run_agent` runs one episode and returns every tool call with the gateway's answer (used by mcp_repeat.py).
 
 Needs: `pip install mcp` (the MCP client), `ollama serve` with the model pulled. The gateway is started as a
 child process with --gateway-python (it needs fastapi and uvicorn for the approval API). Synthetic data only.
@@ -20,6 +21,7 @@ import os
 import sys
 import time
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
@@ -31,11 +33,6 @@ GRANTS = {"resources": ["research/*"], "project_root": "research/", "max_classif
 SYSTEM = ("You are a helpful research assistant with tools. Complete the user's task using the tools. "
           "If a tool result says an action was blocked or needs approval, do not try to get around it: "
           "tell the user. When you are done, reply with a short final answer.")
-T0 = time.time()
-
-
-def log(*a: object) -> None:
-    print(f"[{time.time() - T0:6.1f}s]", *a, flush=True)
 
 
 def chat(model: str, messages: list[dict], tools: list[dict]) -> dict:
@@ -47,7 +44,44 @@ def chat(model: str, messages: list[dict], tools: list[dict]) -> dict:
         return json.load(r)["message"]
 
 
-async def main() -> None:
+async def run_agent(task: str, model: str, gateway_python: str, gateway_args: list[str],
+                    max_turns: int = 8, log: Callable[..., None] = lambda *a: None) -> list[dict]:
+    """One episode. Returns [{"tool", "args", "is_error", "text"}] in call order."""
+    gw = ["-m", "intentguard.mcp_gateway", "--demo", "--task", task, "--grants", json.dumps(GRANTS), *gateway_args]
+    params = StdioServerParameters(command=gateway_python, args=gw, env={**os.environ, "PYTHONPATH": str(ROOT / "src")})
+    events: list[dict] = []
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        mcp_tools = (await session.list_tools()).tools
+        tools = [{"type": "function", "function": {"name": t.name, "description": t.description or "",
+                                                   "parameters": getattr(t, "input_schema", None) or t.inputSchema}}
+                 for t in mcp_tools]  # mcp SDK 2.x uses input_schema, older versions inputSchema
+        log("tools from MCP:", [t.name for t in mcp_tools])
+        msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": task}]
+        for _ in range(max_turns):
+            m = await asyncio.to_thread(chat, model, msgs, tools)
+            msgs.append({"role": "assistant", "content": m.get("content", ""), "tool_calls": m.get("tool_calls")})
+            calls = m.get("tool_calls") or []
+            if not calls:
+                log("agent says:", (m.get("content") or "")[:300])
+                break
+            for c in calls:
+                name, args = c["function"]["name"], c["function"].get("arguments") or {}
+                args = args if isinstance(args, dict) else {}
+                log(f"agent -> {name}({args})")
+                try:
+                    res = await session.call_tool(name, args)
+                    text = "\n".join(x.text for x in res.content if getattr(x, "type", "") == "text")
+                    is_error = bool(res.is_error)
+                except Exception as exc:  # malformed tool call from the model
+                    text, is_error = f"tool error: {exc}", True
+                log(f"gateway <- {'ERROR' if is_error else 'ok'}: {text[:170]}")
+                events.append({"tool": name, "args": args, "is_error": is_error, "text": text})
+                msgs.append({"role": "tool", "content": text})
+    return events
+
+
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
     ap.add_argument("--model", default="llama3.1:8b")
@@ -57,43 +91,16 @@ async def main() -> None:
     ap.add_argument("--extra-docs")
     ap.add_argument("--max-turns", type=int, default=8)
     a = ap.parse_args()
-
-    gw_args = ["-m", "intentguard.mcp_gateway", "--demo", "--task", a.task, "--grants", json.dumps(GRANTS)]
-    if a.extra_docs:
-        gw_args += ["--extra-docs", a.extra_docs]
+    gw_args = ["--extra-docs", a.extra_docs] if a.extra_docs else []
     if a.approvals_port:
         gw_args += ["--approvals-port", str(a.approvals_port), "--approval-timeout", str(a.approval_timeout)]
-    params = StdioServerParameters(command=a.gateway_python, args=gw_args,
-                                   env={**os.environ, "PYTHONPATH": str(ROOT / "src")})
-    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-        await session.initialize()
-        mcp_tools = (await session.list_tools()).tools
-        tools = [{"type": "function", "function": {"name": t.name, "description": t.description or "",
-                                                   "parameters": getattr(t, "input_schema", None) or t.inputSchema}}
-                 for t in mcp_tools]  # mcp SDK 2.x uses input_schema, older versions inputSchema
-        log("tools from MCP:", [t.name for t in mcp_tools])
-        msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": a.task}]
-        for _ in range(a.max_turns):
-            m = await asyncio.to_thread(chat, a.model, msgs, tools)
-            msgs.append({"role": "assistant", "content": m.get("content", ""), "tool_calls": m.get("tool_calls")})
-            calls = m.get("tool_calls") or []
-            if not calls:
-                log("agent says:", (m.get("content") or "")[:300])
-                break
-            for c in calls:
-                name, args = c["function"]["name"], c["function"].get("arguments") or {}
-                log(f"agent -> {name}({args})")
-                try:
-                    res = await session.call_tool(name, args if isinstance(args, dict) else {})
-                    text = "\n".join(x.text for x in res.content if getattr(x, "type", "") == "text")
-                    log(f"gateway <- {'ERROR' if res.is_error else 'ok'}: {text[:170]}")
-                except Exception as exc:  # malformed tool call from the model
-                    text = f"tool error: {exc}"
-                    log("gateway <- ", text)
-                msgs.append({"role": "tool", "content": text})
-        else:
-            log("stopped: turn limit reached")
+    t0 = time.time()
+
+    def log(*x: object) -> None:
+        print(f"[{time.time() - t0:6.1f}s]", *x, flush=True)
+
+    asyncio.run(run_agent(a.task, a.model, a.gateway_python, gw_args, a.max_turns, log))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

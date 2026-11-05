@@ -30,6 +30,7 @@ class Tool:
     fn: Callable[..., Any]
     resource_arg: str | None = None
     dest_arg: str | None = None
+    resource_optional: bool = False  # an empty or placeholder value means "no file", not a path
 
 
 @dataclass
@@ -95,6 +96,11 @@ class Gateway:
                          "- Tool is not registered for this agent", "block", s.caps)
             self._log(req, d)
             return Result(d)
+        if (tool.resource_optional and tool.resource_arg
+                and str(args.get(tool.resource_arg, "x")).strip().lower() in ("", "null", "none")):
+            # models often fill an optional file argument with "" or "null"; drop it so "." or "null" is not
+            # judged as a path (found when the gateway blocked legitimate emails with attachment="")
+            args = {k: v for k, v in args.items() if k != tool.resource_arg}
         if tool.resource_arg and args.get(tool.resource_arg) is not None:
             args = {**args, tool.resource_arg: canonical(args[tool.resource_arg])}
         res = args.get(tool.resource_arg) if tool.resource_arg else None
