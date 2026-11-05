@@ -57,14 +57,17 @@ Trust tiers for destinations: `LOCAL`, `APPROVED`, `UNKNOWN`, `DENYLISTED`.
 | SCOPE-002 | Operation not in `allowed_ops` | BLOCK |
 | SCOPE-003 | Resource classification above `max_classification` | BLOCK |
 | SCOPE-004 | Scope confidence < threshold and action touches sensitive resource | REVIEW |
+| SCOPE-005 | CONFIDENTIAL+ file or table not named by the task (path or full file name; table name as a word) | REVIEW |
 | EGRESS-001 | Destination `UNKNOWN` | REVIEW |
 | EGRESS-002 | Tainted (CONFIDENTIAL+) data to non-approved destination | BLOCK |
 | EGRESS-003 | Destination `DENYLISTED` | BLOCK |
-| TAINT-001 | Secret pattern (key, token, private key) in outbound args | BLOCK |
+| TAINT-001 | Secret pattern (key, token, private key) in outbound args, also after rot13, reversal, URL, base64, base32 or hex decoding and across recent outbound messages | BLOCK |
+| TAINT-002 | Outbound content contains data read from a CONFIDENTIAL+ file or table in this session (fingerprint match, 12 letters/digits, same decodings) | BLOCK for SECRET data, REVIEW for CONFIDENTIAL |
 | SEQ-001 | Secret search followed by env/config read | +risk |
 | SEQ-002 | Sensitive read followed by unfamiliar-domain contact | +risk |
 | SEQ-003 | Collected sensitive data followed by upload/send | BLOCK |
 | SEQ-004 | Repeated denied attempts in one session | +risk, escalate |
+| SEQ-005 | Egress, shell or database action after injection-like text was seen in tool output | REVIEW |
 | INJ-001 | Instruction-like text in tool *output* that changes the task (flag, never trust) | +risk |
 | EXEC-001 | Shell command outside allowlist | BLOCK |
 | EXEC-002 | Shell command with network or credential access | REVIEW |
@@ -74,7 +77,7 @@ Dynamic reduction ladder driven by cumulative risk: `>=0.4` disable external net
 
 ## 4. Repo layout and key interfaces
 
-Layout as in the kickoff prompt. Key interfaces: `PolicyEngine.evaluate(ActionRequest, TaskScope, SessionState) -> Decision` (implementations: `PythonRulesEngine`, later `OpaEngine`), `ScopeCompiler.compile(task, grants) -> TaskScope`, `RiskEngine.update(session, action, decision)`, `TaintLedger.mark/propagate/check`, `AuditLog.append/verify`. Benchmark ablation switches are plain config flags: `intent=False`, `behaviour=False`, `dataflow=False`.
+Layout as in the kickoff prompt. Key interfaces: `PolicyEngine.evaluate(ActionRequest, TaskScope, SessionState) -> Decision` (implementations: `PythonRulesEngine`, later `OpaEngine`), `ScopeCompiler.compile(task, grants) -> TaskScope`, `RiskEngine.update(session, action, decision)`, `TaintLedger.mark/propagate/check`, `AuditLog.append/verify`. Benchmark ablation switches are plain config flags: `intent=False`, `behaviour=False`, `dataflow=False`, `mention_check=False`, `cross_session=False`, `lineage=False`.
 
 Isolation: the agent runs in its own process or container with only the gateway's HTTP/MCP endpoint reachable; protected tools live behind the gateway on an internal network with no route out.
 
