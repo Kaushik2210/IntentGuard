@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from langchain.agents import create_agent  # noqa: E402
-from langgraph.errors import GraphRecursionError  # noqa: E402
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
 from langchain_ollama import ChatOllama  # noqa: E402
+from langgraph.errors import GraphRecursionError  # noqa: E402
 
 from bench.baselines import AllowAllEngine  # noqa: E402
 from intentguard import Gateway, PolicyEngine, compile_scope  # noqa: E402
