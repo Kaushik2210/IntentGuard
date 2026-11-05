@@ -33,6 +33,24 @@ the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey. Tests: `python -m pytest -q` (43 passing).
 
+## Use it with an agent framework (LangChain / LangGraph)
+
+The agent gets tools that hold no capability; every call goes to the gateway, which allows it, sends it to a
+human, or explains why not, in text the model can read.
+
+```python
+from langchain.agents import create_agent
+from intentguard.client import open_http_session           # or InProcessSession(gateway.open_session(...))
+from intentguard.integrations.langchain import guarded_tools
+
+session = open_http_session("http://localhost:8000", task, grants)   # grants: resources, destinations, ceiling
+agent = create_agent(model, guarded_tools(session))
+```
+
+`pip install -e ".[langchain]"`. `agents/langgraph_agent.py` runs a real local model (Ollama) this way, with
+`--poison` to add forceful injected documents and `--unprotected` for the same agent without the gateway.
+`tests/test_langchain.py` drives the loop with a scripted model so CI stays deterministic.
+
 ## Dashboard (demo)
 
 ```

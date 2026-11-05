@@ -8,6 +8,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5", "fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.29"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
+langchain = ["langchain>=1.0", "langchain-ollama>=1.0", "langgraph>=1.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
