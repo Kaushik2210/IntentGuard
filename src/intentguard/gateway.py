@@ -71,7 +71,7 @@ class Gateway:
         self.engine = engine or PolicyEngine()
         self.audit = audit or AuditLog()
         self.sessions: dict[str, Session] = {}
-        self.pending: dict[str, tuple[Session, Tool, dict]] = {}
+        self.pending: dict[str, tuple[Session, Tool, dict, Classification]] = {}
         self.memory: dict[str, dict] = {}  # per-agent risk and tags carried across sessions
 
     def open_session(self, session_id: str, agent_id: str, scope: TaskScope) -> GatewayClient:
@@ -120,9 +120,9 @@ class Gateway:
                          f"engine error: {exc!r}", "block", s.caps)
         self._log(req, d)
         if d.decision == Verdict.ALLOW:
-            return Result(d, self._run(s, tool, args))
+            return Result(d, self._run(s, tool, args, req.classification))
         if d.decision == Verdict.REVIEW:
-            self.pending[req.action_id] = (s, tool, args)
+            self.pending[req.action_id] = (s, tool, args, req.classification)
         return Result(d)
 
     def _tables(self, sql: str) -> list[str]:
@@ -139,16 +139,19 @@ class Gateway:
         return list(dict.fromkeys(f for f in found if f and f.lower() not in ("select", "values")))
 
     def approve(self, action_id: str, approver: str) -> Any:
-        s, tool, args = self.pending.pop(action_id)
+        s, tool, args, cls = self.pending.pop(action_id)
         self.audit.append({"event": "approved", "action": action_id, "by": approver})
-        return self._run(s, tool, args)
+        return self._run(s, tool, args, cls)
 
     def reject(self, action_id: str, approver: str) -> None:
         self.pending.pop(action_id)
         self.audit.append({"event": "rejected", "action": action_id, "by": approver})
 
-    def _run(self, s: Session, tool: Tool, args: dict) -> Any:
+    def _run(self, s: Session, tool: Tool, args: dict, cls: Classification | None = None) -> Any:
         out = tool.fn(**args)
+        remember = getattr(self.engine, "remember", None)
+        if remember and cls is not None and cls >= Classification.CONFIDENTIAL and tool.op in (Op.READ, Op.QUERY):
+            remember(s, out, cls)  # fingerprint sensitive content so it is recognised if it leaves
         observe = getattr(self.engine, "observe", None)
         if observe and observe(s, out):
             self.audit.append({"event": "injection_flag", "session": s.session_id, "tool": tool.name,

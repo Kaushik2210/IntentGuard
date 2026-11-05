@@ -393,3 +393,42 @@ Engine before the fix, `python -m bench.breakdown` (harmful steps that executed)
 | total (ASR) | 10/13 (76.9%) | 9/13 (69.2%) |
 
 All benign controls were allowed in both halves.
+
+## F18. Content-lineage check (TAINT-002) and its measured effect on F17
+
+Change (developed against `rt3_dev`; tests in `tests/test_lineage.py`):
+1. The gateway fingerprints every CONFIDENTIAL-or-higher file or table the session reads (all runs of 12
+   letters/digits, case, spaces and punctuation ignored) and keeps the fingerprints on the session.
+2. Outbound content to any destination that is not LOCAL, and the last 4000 characters of earlier outbound
+   text, is decoded through rot13, reversal, URL decoding, and base64/base32/hex runs (two levels) and compared
+   with the fingerprints. A match on SECRET-class data is BLOCKed; on CONFIDENTIAL data it goes to REVIEW.
+3. The decoder set used by the older credential-pattern check (TAINT-001) was widened to the same views.
+   Switching lineage off (`EngineConfig(lineage=False)`) therefore still leaves those wider decoders on.
+
+Harmful steps that executed (IntentGuard full):
+
+| Class | rt3_dev before -> after | rt3_heldout before -> after |
+|---|---|---|
+| encoded credential exfiltration | 5/5 -> 0/5 | 4/5 -> 0/5 |
+| CONFIDENTIAL content to an approved destination | 2/2 -> 0/2 | 2/2 -> 1/2 |
+| sharded exfiltration | 3/6 -> 1/6 | 1/4 -> 1/4 |
+| paraphrase, leetspeak (expected limits) | - | 2/2 -> 2/2 |
+| total (ASR) | 10/13 (76.9%) -> 1/13 (7.7%) | 9/13 (69.2%) -> 4/13 (30.8%) |
+
+With lineage off but the wider decoders on: 6/13 (46.2%) on both halves, so lineage itself accounts for
+about 40 and 15 percentage points. The older `rt_heldout` set moved from 5/17 (29.4%, F16) to 2/17 with
+only the wider decoders and to 1/17 (5.9%) with lineage; its base32, URL and reversed payloads were the
+classes F16 had deliberately left open. No other set changed (core, seq, the three generated sets,
+adversarial, adversarial2, injection text, cross-session and database), and every benign control in both
+halves was still allowed. Median decision latency stayed about 0.05 ms.
+
+What still gets through, and why:
+- A paraphrase ("one hundred twenty thousand") and leetspeak: no 12-character run survives. By design.
+- A CONFIDENTIAL leak with words between the rows ("alice,120000 and bob,98000"): the longest shared run
+  is 11 characters, just under the threshold. Lowering the threshold would flag more ordinary text.
+- The first piece of a split secret, when it is shorter than the threshold.
+- Anything reaching a LOCAL destination, and sensitive data read in an earlier session of the same agent
+  (fingerprints are per session).
+- Caveats: held-out here means new instances of the same classes, written by the same author, not new classes.
+  Legitimate tasks that email confidential figures now need approval; that friction is not measured at scale
+  because the generated sets contain no such tasks, only the few controls in `rt3`.

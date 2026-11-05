@@ -148,6 +148,7 @@ SYSTEMS = {
     "intentguard_full": lambda: PolicyEngine(EngineConfig()),
     "ablate_no_mention_check": lambda: PolicyEngine(EngineConfig(mention_check=False)),
     "ablate_no_cross_session": lambda: PolicyEngine(EngineConfig(cross_session=False)),
+    "ablate_no_lineage": lambda: PolicyEngine(EngineConfig(lineage=False)),
     "ablate_no_intent": lambda: PolicyEngine(EngineConfig(intent=False)),
     "ablate_no_behaviour": lambda: PolicyEngine(EngineConfig(behaviour=False)),
     "ablate_no_dataflow": lambda: PolicyEngine(EngineConfig(dataflow=False)),

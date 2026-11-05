@@ -10,6 +10,7 @@ import codecs
 import fnmatch
 import re
 import time
+import urllib.parse
 from dataclasses import dataclass, replace
 
 from .models import (
@@ -50,6 +51,7 @@ RULE_TEXT = {
     "EGRESS-002": "Confidential data seen in this session would leave to an unapproved destination",
     "EGRESS-003": "The destination is denylisted",
     "TAINT-001": "The outbound content contains a secret or credential",
+    "TAINT-002": "The outbound content contains data read from a sensitive file in this session",
     "SEQ-001": "Secret search followed by reading a config/credential file",
     "SEQ-002": "Sensitive data collected, then an unfamiliar destination contacted",
     "SEQ-005": "Untrusted content with instruction-like text was read earlier in this session",
@@ -72,6 +74,8 @@ class EngineConfig:
     cross_session: bool = True  # carry decayed risk and tags to a new session of the same agent
     carry_decay: float = 0.75
     mention_check: bool = True  # CONFIDENTIAL+ reads must be referenced by the task text
+    lineage: bool = True  # outbound content that contains sensitive data read in this session
+    lineage_k: int = 12  # shortest run of letters/digits that counts as a match
 
 
 def _mentioned(resource: str, task: str) -> bool:
@@ -84,21 +88,50 @@ def _mentioned(resource: str, task: str) -> bool:
     return re.search(r"\b" + re.escape(r) + r"\b", t) is not None
 
 
-def _decodings(text: str) -> list[str]:
-    """Plausible plain-text views of outbound content: base64 and hex runs, and rot13 of the whole text.
-    Deliberately limited to these three; other encodings (base32, URL, reversed) are not handled."""
-    views = [text, codecs.decode(text, "rot13")]
+def _decodings(text: str, depth: int = 2) -> list[str]:
+    """Plain-text views of outbound content, to look through simple encodings: rot13, reversal, URL
+    encoding, and base64, base32 and hex runs, decoded up to `depth` times. Not a general decoder:
+    ciphers, compression, character substitution and paraphrase are not handled."""
+    views = [text]
+    if depth < 1:
+        return views
+    nxt = [codecs.decode(text, "rot13"), text[::-1], urllib.parse.unquote(text)]
     for m in re.findall(r"[A-Za-z0-9+/]{16,}={0,2}", text):
         try:
-            views.append(base64.b64decode(m + "=" * (-len(m) % 4)).decode("utf-8", "ignore"))
+            nxt.append(base64.b64decode(m + "=" * (-len(m) % 4)).decode("utf-8", "ignore"))
+        except ValueError:
+            pass
+    for m in re.findall(r"[A-Za-z2-7]{16,}={0,6}", text):
+        try:
+            nxt.append(base64.b32decode(m.upper() + "=" * (-len(m) % 8)).decode("utf-8", "ignore"))
         except ValueError:
             pass
     for m in re.findall(r"(?:[0-9a-fA-F]{2}\s?){8,}", text):
         try:
-            views.append(bytes.fromhex(re.sub(r"\s", "", m)).decode("utf-8", "ignore"))
+            nxt.append(bytes.fromhex(re.sub(r"\s", "", m)).decode("utf-8", "ignore"))
         except ValueError:
             pass
-    return views
+    for v in nxt:
+        if v and v != text:
+            views += _decodings(v, depth - 1)
+    return list(dict.fromkeys(views))
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _grams(text: str, k: int) -> frozenset[str]:
+    t = _norm(text)[:20000]
+    return frozenset(t[i:i + k] for i in range(len(t) - k + 1))
+
+
+def _overlaps(views: list[str], grams: frozenset[str], k: int) -> bool:
+    for v in views:
+        n = _norm(v)
+        if any(n[i:i + k] in grams for i in range(len(n) - k + 1)):
+            return True
+    return False
 
 
 class PolicyEngine:
@@ -133,6 +166,13 @@ class PolicyEngine:
         s.risk = mem["risk"] * self.cfg.carry_decay
         s.tags = sorted(set(mem["tags"]) & self.CARRY_TAGS)
         self._reduce(s)
+
+    def remember(self, s: Session, output: object, cls: Classification) -> None:
+        """Keep a fingerprint of sensitive data the session has read, to recognise it on the way out."""
+        if self.cfg.lineage:
+            grams = _grams(str(output), self.cfg.lineage_k)
+            if grams:
+                s.lineage.append((cls, grams))
 
     def observe(self, s: Session, output: object) -> bool:
         """Scan tool output for instruction-like text. Flag and raise risk; never trusted, never obeyed."""
@@ -207,6 +247,13 @@ class PolicyEngine:
             if (SECRET_RE.search(str(req.args))
                     or any(SECRET_RE.search(v) for v in _decodings(text) + _decodings(s.outbound))):
                 fire("TAINT-001", Verdict.BLOCK, 0.25, "secret pattern in outbound content")
+            if cfg.lineage and s.lineage and req.trust != Trust.LOCAL:
+                views = _decodings(text) + _decodings(s.outbound)
+                hit = [c for c, g in s.lineage if _overlaps(views, g, cfg.lineage_k)]
+                if hit:  # credentials are blocked; other confidential data goes to a human
+                    top = max(hit)
+                    fire("TAINT-002", Verdict.BLOCK if top >= Classification.SECRET else Verdict.REVIEW, 0.3,
+                         f"matches {top.name} data read earlier", "no sensitive content")
 
         # shell allowlist
         if req.op == Op.EXEC:

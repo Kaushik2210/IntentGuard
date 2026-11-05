@@ -113,3 +113,4 @@ class Session:
     quarantined: bool = False
     caps: Capabilities = field(default_factory=Capabilities)
     outbound: str = ""  # recent outbound text, so a secret split across several sends is still seen
+    lineage: list = field(default_factory=list)  # (classification, n-grams) of sensitive content read here
