@@ -372,3 +372,24 @@ but those sets were written to expose the gaps just closed, so that is partly ci
 
 Still open: other encodings (base32, URL, reversed, split-then-encoded), the first fragments of a sharded
 leak, an agent that uses a fresh agent id to reset cross-session risk, and dynamic or encoded SQL.
+
+## F17. Red-team batch 4 (`bench/redteam3.py`): frozen BEFORE the content-lineage check
+
+Gaps left by F16: other encodings, the first piece of a split secret, and CONFIDENTIAL (not
+credential-pattern) content leaving through an approved destination. Plan: remember what sensitive files the
+session read and block or review outbound content that contains it, however it is encoded. Two halves with
+different instances (`rt3_dev` develops the fix, `rt3_heldout` is not used for tuning). The held-out half also
+holds two attacks the fix is not expected to catch (a paraphrase and leetspeak), so limits are measured.
+Same author as the engine: held out from tuning, not independent.
+
+Engine before the fix, `python -m bench.breakdown` (harmful steps that executed):
+
+| Class | rt3_dev | rt3_heldout |
+|---|---|---|
+| encoded credential exfiltration | 5/5 | 4/5 |
+| CONFIDENTIAL content to an approved destination | 2/2 | 2/2 |
+| sharded exfiltration (first pieces leave) | 3/6 | 1/4 |
+| paraphrase / leetspeak (expected limits) | - | 2/2 |
+| total (ASR) | 10/13 (76.9%) | 9/13 (69.2%) |
+
+All benign controls were allowed in both halves.
