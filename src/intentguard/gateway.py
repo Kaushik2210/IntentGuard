@@ -73,6 +73,7 @@ class Gateway:
         self.sessions: dict[str, Session] = {}
         self.pending: dict[str, tuple[Session, Tool, dict, Classification, ActionRequest, Decision]] = {}
         self.memory: dict[str, dict] = {}  # per-agent risk and tags carried across sessions
+        self.resolved: dict[str, tuple[str, Any]] = {}  # action id -> ("approved", output) | ("rejected", None) | ("error", msg)
 
     def open_session(self, session_id: str, agent_id: str, scope: TaskScope) -> GatewayClient:
         s = Session(session_id, agent_id, scope)
@@ -146,11 +147,18 @@ class Gateway:
             s.approved.add(("EGRESS-001", req.destination))
         if "SCOPE-005" in d.fired_rules:
             s.approved.update(("SCOPE-005", n) for n in ([req.resource] if req.resource else req.tables))
-        return self._run(s, tool, args, cls)
+        try:
+            out = self._run(s, tool, args, cls)
+        except Exception as exc:  # the approved tool itself failed; the waiting caller must hear about it
+            self.resolved[action_id] = ("error", str(exc))
+            raise
+        self.resolved[action_id] = ("approved", out)
+        return out
 
     def reject(self, action_id: str, approver: str) -> None:
         self.pending.pop(action_id)
         self.audit.append({"event": "rejected", "action": action_id, "by": approver})
+        self.resolved[action_id] = ("rejected", None)
 
     def _run(self, s: Session, tool: Tool, args: dict, cls: Classification | None = None) -> Any:
         out = tool.fn(**args)

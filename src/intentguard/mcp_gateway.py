@@ -25,6 +25,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from typing import Any, TextIO
 
 from .audit import AuditLog
@@ -32,7 +33,7 @@ from .client import InProcessSession, Session, ToolResult
 from .engine import PolicyEngine
 from .gateway import Catalog, Gateway, Tool
 from .mock_env import MockEnv
-from .models import Classification, Op, Trust
+from .models import Classification, Op, Trust, Verdict
 from .scope import compile_scope
 
 SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
@@ -127,6 +128,41 @@ class McpGateway:
             if out is not None:
                 stdout.write(json.dumps(out) + "\n")
                 stdout.flush()
+
+
+class ApprovalSession:
+    """Routes calls through the HTTP service app, so the dashboard sees them, and waits for a human on REVIEW.
+
+    A call that needs approval blocks here until someone approves or rejects it through the service
+    (`/pending/{id}/approve` or `/reject`, which the dashboard uses). If nobody answers within `timeout`
+    seconds the pending action is cancelled, so it cannot run later after the agent has been told it failed.
+    """
+
+    def __init__(self, app: Any, gateway: Gateway, session_id: str, timeout: float = 45.0, poll: float = 0.1):
+        self._app, self._gw, self._sid, self._timeout, self._poll = app, gateway, session_id, timeout, poll
+
+    def call(self, tool: str, **args: Any) -> ToolResult:
+        res = self._app.state.do_call(self._sid, tool, args)
+        d = res.decision
+        out = ToolResult(d.decision.value, d.explanation, list(d.fired_rules), res.output, d.action_id, d.risk_score)
+        if d.decision != Verdict.REVIEW:
+            return out
+        deadline = time.monotonic() + self._timeout
+        while time.monotonic() < deadline:
+            done = self._gw.resolved.get(d.action_id)
+            if done:
+                kind, value = done
+                if kind == "approved":
+                    return ToolResult("ALLOW", "approved by a human", out.rules, value, d.action_id, out.risk)
+                if kind == "rejected":
+                    return ToolResult("BLOCK", "A human rejected this action.", out.rules, None, d.action_id, out.risk)
+                return ToolResult("BLOCK", f"A human approved it but the tool failed: {value}", out.rules, None,
+                                  d.action_id, out.risk)
+            time.sleep(self._poll)
+        if d.action_id in self._gw.pending:  # cancel, so a late approval cannot run it behind the agent's back
+            self._gw.reject(d.action_id, "timeout")
+        return ToolResult("BLOCK", f"No human answered within {self._timeout:.0f}s, so the action was cancelled "
+                                   "and not executed.", out.rules, None, d.action_id, out.risk)
 
 
 # -- proxy mode: wrap an existing MCP server ----------------------------------------
@@ -227,6 +263,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--config", help="JSON file mapping upstream tools to operations (proxy mode)")
     ap.add_argument("--agent-id", default="mcp-client")
     ap.add_argument("--audit-file", help="persist the hash-chained audit log here")
+    ap.add_argument("--approvals-port", type=int, help="serve the approval API and dashboard backend on 127.0.0.1:PORT; "
+                                                       "calls that need approval wait for a human")
+    ap.add_argument("--approval-timeout", type=float, default=45.0, help="seconds to wait for a human (default 45)")
+    ap.add_argument("--admin-token", help="bearer token for the approval API (default: none, local use only)")
     a = ap.parse_args(argv)
     if a.demo == bool(a.upstream):
         ap.error("choose exactly one of --demo or --upstream")
@@ -239,7 +279,20 @@ def main(argv: list[str] | None = None) -> None:
             ap.error("--upstream needs --config")
         gw, exposed = build_proxy(StdioUpstream(shlex.split(a.upstream)), _load(a.config))
         gw.audit = audit
-    session = InProcessSession(gw.open_session("mcp", a.agent_id, compile_scope(a.task, _load(a.grants))))
+    grants = _load(a.grants)
+    session: Session
+    if a.approvals_port:
+        from .service.app import NewSession, create_app  # needs the 'api' extra (fastapi, uvicorn)
+        app = create_app(gw, None, a.admin_token)
+        app.state.do_open(NewSession(session_id="mcp", agent_id=a.agent_id, task=a.task, grants=grants))
+        import uvicorn
+        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=a.approvals_port, log_level="warning"))
+        threading.Thread(target=server.run, daemon=True).start()
+        session = ApprovalSession(app, gw, "mcp", a.approval_timeout)
+        print(f"approval API on http://127.0.0.1:{a.approvals_port} "
+              f"({'token required' if a.admin_token else 'NO TOKEN: local use only'})", file=sys.stderr)
+    else:
+        session = InProcessSession(gw.open_session("mcp", a.agent_id, compile_scope(a.task, grants)))
     print("intentguard MCP gateway ready", file=sys.stderr)
     McpGateway(session, exposed).serve()
 

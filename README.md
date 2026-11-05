@@ -70,11 +70,20 @@ destination, plus optional `classes` (resource sensitivity), `trust` (destinatio
 is not listed is never shown to the client, and a call to it is blocked and audited. Point an MCP host
 (Claude Desktop, Cursor, an agent SDK) at the command above instead of at the real server.
 
+**Approvals.** Add `--approvals-port 8765` (needs `pip install -e ".[api]"`) and the gateway also serves the
+approval API on `127.0.0.1:8765`, the same endpoints the dashboard uses. A call that needs a human
+(unapproved recipient, loosely named sensitive file) then waits instead of failing: the agent's `tools/call`
+stays open until someone approves or rejects it in the dashboard, and the tool runs only after approval. If
+nobody answers within `--approval-timeout` seconds (default 45, keep it below your MCP host's own request
+timeout) the pending action is cancelled, so a late approval cannot run it behind the agent's back. An
+approval is remembered for that recipient or file for the rest of the session. The API has no token unless
+you pass `--admin-token`; it binds to localhost only.
+
 Implemented: initialize, ping, tools/list, tools/call. Not implemented: resources, prompts, sampling, the HTTP
-transport, and an approval channel (a REVIEW result is reported as not executed; approvals need the HTTP
-service and dashboard). Checked against the official `mcp` Python SDK client (2.3.0): initialize, list and
-call, including a blocked call, work. `tests/test_mcp_gateway.py` covers the protocol, the stdio process, and
-proxying a real child MCP server, including that a blocked call never reaches the upstream.
+transport, and per-request cancellation notifications. Checked against the official `mcp` Python SDK client
+(2.3.0): initialize, list and call, including a blocked call, work. `tests/test_mcp_gateway.py` covers the
+protocol, the stdio process, and proxying a real child MCP server, including that a blocked call never reaches
+the upstream; `tests/test_mcp_approval.py` covers approve, reject, timeout and a real process approved over HTTP.
 
 ## Dashboard (demo)
 
