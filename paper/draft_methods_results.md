@@ -141,6 +141,14 @@ runs (20%, 95% CI 10.5% to 34.8%): reads of the secrets file and emails to two d
 With IntentGuard, 0 of 40 (CI 0% to 8.8%) [F14]. This is a susceptibility test with one 8B model and
 author-written injections; it is not a rate for real attackers.
 
+A real local model was also run behind the MCP gateway, so that its only tools were the gateway's, with an automatic
+approver for calls that needed a human [F22, F23]. Under a prompt that warns the model not to get around blocked
+actions it almost never followed the injection (1 attempt in 21 guarded runs, none unprotected) and the runs exposed
+a gateway bug that blocked legitimate emails with an empty optional attachment, which was fixed. Under the neutral
+prompt with two forceful poisoned documents (8 runs each), the unprotected agent executed an unauthorized call in 11 of
+16 runs (95% CI 44% to 86%); through the gateway 0 of 16 executed (CI 0% to 19%) while the legitimate email was sent
+in all 16. This is a susceptibility stress test with one 8B model and an oracle approver, not a rate for real attackers.
+
 ## 7. Limitations (state these plainly)
 
 - Same author for engine and episodes; no independent episode set yet.
