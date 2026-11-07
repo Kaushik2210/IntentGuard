@@ -37,6 +37,7 @@ class Tool:
 class Result:
     decision: Decision
     output: Any = None
+    error: str | None = None  # the policy allowed the call but the tool itself failed
 
 
 class Catalog:
@@ -89,6 +90,13 @@ class Gateway:
     def call(self, session_id: str, tool_name: str, **args) -> Result:
         s = self.sessions[session_id]
         tool = self.__tools.get(tool_name)
+        if s.closed:  # an administrator ended this session
+            req = ActionRequest(session_id, s.agent_id, tool_name, Op.EXEC, args=args)
+            d = Decision(req.action_id, Verdict.BLOCK, s.risk, ["SESSION-001"],
+                         [Evidence("SESSION-001", "This session was closed by an administrator", tool_name)],
+                         "- This session was closed by an administrator", "block", s.caps)
+            self._log(req, d)
+            return Result(d)
         if tool is None:  # fail closed
             req = ActionRequest(session_id, s.agent_id, tool_name, Op.EXEC, args=args)
             d = Decision(req.action_id, Verdict.BLOCK, s.risk, ["PERM-001"],
@@ -127,7 +135,12 @@ class Gateway:
                          f"engine error: {exc!r}", "block", s.caps)
         self._log(req, d)
         if d.decision == Verdict.ALLOW:
-            return Result(d, self._run(s, tool, args, req.classification))
+            try:
+                return Result(d, self._run(s, tool, args, req.classification))
+            except Exception as exc:  # a failing tool is an answer, not a crash; keep it in the audit log
+                self.audit.append({"event": "tool_error", "action": req.action_id, "session": session_id,
+                                   "tool": tool.name, "error": f"{type(exc).__name__}: {exc}"})
+                return Result(d, None, f"{type(exc).__name__}: {exc}")
         if d.decision == Verdict.REVIEW:
             self.pending[req.action_id] = (s, tool, args, req.classification, req, d)
         return Result(d)
@@ -160,6 +173,25 @@ class Gateway:
             raise
         self.resolved[action_id] = ("approved", out)
         return out
+
+    def release(self, session_id: str, approver: str, reason: str = "") -> dict:
+        """A human lifts a session's lock-out: risk, denied count, sequence tags and the capability locks are reset,
+        and the agent's carried-over risk is cleared. What the session has already read (taint, fingerprints of
+        sensitive data, recent outbound text, approvals) is kept, so releasing never makes it forget an exposure."""
+        s = self.sessions[session_id]
+        before = {"risk": round(s.risk, 3), "caps": {k: getattr(s.caps, k) for k in ("network", "shell", "files_locked",
+                                                                                      "db_needs_review")}}
+        s.risk, s.denied, s.quarantined, s.tags = 0.0, 0, False, []
+        s.caps = type(s.caps)()
+        self.memory.pop(s.agent_id, None)
+        self.audit.append({"event": "released", "session": session_id, "by": approver, "reason": reason,
+                           "before": before})
+        return before
+
+    def close(self, session_id: str, approver: str, reason: str = "") -> None:
+        """A human ends a session; every further call in it is blocked and audited."""
+        self.sessions[session_id].closed = True
+        self.audit.append({"event": "closed", "session": session_id, "by": approver, "reason": reason})
 
     def reject(self, action_id: str, approver: str) -> None:
         self.pending.pop(action_id)

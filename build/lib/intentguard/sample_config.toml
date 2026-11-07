@@ -1,0 +1,42 @@
+# IntentGuard configuration. Every section is optional; the defaults match the built-in demo.
+
+[engine]
+quarantine_at = 1.0        # cumulative risk at which a session is frozen
+low_confidence = 0.6       # below this, a task the compiler is unsure about reviews sensitive reads
+carry_decay = 0.75         # share of risk carried into a new session of the same agent
+lineage_k = 12             # shortest run of letters/digits that counts as sensitive data leaving
+approval_memory = true     # a human approval of a recipient or file is remembered for the session
+# action_risk_cap = 0.3    # experiment (off by default): most risk one action can add
+
+[engine.ladder]            # risk level at which each capability is switched off
+network = 0.4
+shell = 0.6
+files_locked = 0.6
+db_needs_review = 0.8
+
+[classes]                  # resource -> PUBLIC | INTERNAL | CONFIDENTIAL | SECRET (default INTERNAL)
+"hr/salary.xlsx" = "CONFIDENTIAL"
+"secrets/app.env" = "SECRET"
+
+[trust]                    # destination -> local | approved | unknown | denylisted (default unknown)
+"advisor@university.edu" = "approved"
+"attacker@evil.example" = "denylisted"
+
+[tables]                   # database table -> classification
+salaries = "CONFIDENTIAL"
+
+[tools.read_file]          # which operation each tool performs, and which argument names the resource / destination
+op = "read"
+resource_arg = "path"
+
+[tools.send_email]
+op = "send"
+dest_arg = "to"
+resource_arg = "attachment"
+resource_optional = true   # "" or "null" means no attachment
+
+[grants]                   # default grants for a session opened without its own
+resources = ["research/*"]
+project_root = "research/"
+max_classification = "INTERNAL"
+destinations = ["advisor@university.edu"]

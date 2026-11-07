@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import shlex
 import subprocess
@@ -31,7 +32,8 @@ from typing import Any, TextIO
 
 from .audit import AuditLog
 from .client import InProcessSession, Session, ToolResult
-from .engine import EngineConfig, PolicyEngine
+from .config import Config, ConfigError, load_config
+from .engine import PolicyEngine
 from .gateway import Catalog, Gateway, Tool
 from .mock_env import MockEnv
 from .models import ActionRequest, Classification, Decision, Op, Trust, Verdict
@@ -110,7 +112,7 @@ class McpGateway:
     def _call(self, name: str, args: dict) -> dict:
         res = self.session.call(name, **args)
         self.calls.append(res)
-        if res.allowed:
+        if res.allowed and not res.error:
             return {"content": [{"type": "text", "text": _text(res.output)}], "isError": False}
         return {"content": [{"type": "text", "text": res.message()}], "isError": True}
 
@@ -153,7 +155,8 @@ class ApprovalSession:
     def call(self, tool: str, **args: Any) -> ToolResult:
         res = self._app.state.do_call(self._sid, tool, args)
         d = res.decision
-        out = ToolResult(d.decision.value, d.explanation, list(d.fired_rules), res.output, d.action_id, d.risk_score)
+        out = ToolResult(d.decision.value, d.explanation, list(d.fired_rules), res.output, d.action_id, d.risk_score,
+                         res.error)
         if d.decision != Verdict.REVIEW:
             return out
         deadline = time.monotonic() + self._timeout
@@ -230,7 +233,7 @@ class StdioUpstream:
         self.proc.terminate()
 
 
-def build_proxy(upstream: Any, config: dict) -> tuple[Gateway, list[dict]]:
+def build_proxy(upstream: Any, config: dict, engine: Any = None) -> tuple[Gateway, list[dict]]:
     """Gateway whose tools forward to `upstream`. `config`:
 
         {"tools":   {"read_note": {"op": "read", "resource_arg": "path"},
@@ -258,7 +261,14 @@ def build_proxy(upstream: Any, config: dict) -> tuple[Gateway, list[dict]]:
     catalog = Catalog({k: Classification[v] for k, v in config.get("classes", {}).items()},
                       {k: Trust(v) for k, v in config.get("trust", {}).items()},
                       {k: Classification[v] for k, v in config.get("tables", {}).items()})
-    return Gateway(tools, catalog, PolicyEngine()), exposed
+    return Gateway(tools, catalog, engine or PolicyEngine()), exposed
+
+
+def split_command(cmd: str) -> list[str]:
+    """Split a command line into arguments. On Windows a backslash is a path separator, not an escape, so the
+    plain POSIX rules would mangle a path such as C:/dir/python.exe written with backslashes; quotes still work."""
+    parts = shlex.split(cmd, posix=os.name != "nt")
+    return [p[1:-1] if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'" else p for p in parts]
 
 
 def _load(arg: str) -> dict:
@@ -268,11 +278,13 @@ def _load(arg: str) -> dict:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="MCP server that authorizes every tool call with IntentGuard")
     ap.add_argument("--task", required=True, help="the user's task, which defines what the agent may do")
-    ap.add_argument("--grants", required=True, help="JSON file or inline JSON: resources, destinations, ceiling")
+    ap.add_argument("--grants", help="JSON file or inline JSON: resources, destinations, ceiling "
+                                     "(default: the [grants] section of --config)")
     ap.add_argument("--demo", action="store_true", help="serve the mock tools (synthetic data)")
     ap.add_argument("--extra-docs", help="demo mode: JSON file {path: text} of extra synthetic documents (INTERNAL)")
     ap.add_argument("--upstream", help="command that starts the MCP server to protect")
-    ap.add_argument("--config", help="JSON file mapping upstream tools to operations (proxy mode)")
+    ap.add_argument("--config", help="intentguard.toml (or .json): engine settings, catalog and, for proxy mode, "
+                                     "which upstream tools to expose")
     ap.add_argument("--agent-id", default="mcp-client")
     ap.add_argument("--no-policy", action="store_true", help="demo only: allow every call (comparison baseline)")
     ap.add_argument("--action-risk-cap", type=float, help="most risk a single action can add (experiment; default none)")
@@ -286,6 +298,12 @@ def main(argv: list[str] | None = None) -> None:
     a = ap.parse_args(argv)
     if a.demo == bool(a.upstream):
         ap.error("choose exactly one of --demo or --upstream")
+    try:
+        cfg = load_config(a.config) if a.config else Config()
+    except ConfigError as exc:
+        ap.error(str(exc))
+    engine_cfg = replace(cfg.engine, **{k: v for k, v in (("action_risk_cap", a.action_risk_cap),
+                                                          ("lockout_review", a.lockout_review or None)) if v})
     audit = AuditLog(a.audit_file)
     if a.demo:
         if a.extra_docs:  # e.g. a poisoned document for demos; must be loaded before the catalog is built
@@ -293,14 +311,17 @@ def main(argv: list[str] | None = None) -> None:
             for path, body in _load(a.extra_docs).items():
                 mock_env.FILES[path] = (body, Classification.INTERNAL)
         env = MockEnv()
-        engine = _AllowAll() if a.no_policy else PolicyEngine(EngineConfig(action_risk_cap=a.action_risk_cap, lockout_review=a.lockout_review))
-        gw, exposed = Gateway(env.tools(), env.catalog(), engine, audit), DEMO_TOOLS
+        engine = _AllowAll() if a.no_policy else PolicyEngine(engine_cfg)
+        has_catalog = cfg.classes or cfg.trust or cfg.tables
+        gw, exposed = Gateway(env.tools(), cfg.catalog() if has_catalog else env.catalog(), engine, audit), DEMO_TOOLS
     else:
-        if not a.config:
-            ap.error("--upstream needs --config")
-        gw, exposed = build_proxy(StdioUpstream(shlex.split(a.upstream)), _load(a.config))
+        if not cfg.tools:
+            ap.error("--upstream needs --config with at least one [tools.<name>] section")
+        gw, exposed = build_proxy(StdioUpstream(split_command(a.upstream)), cfg.proxy_dict(), PolicyEngine(engine_cfg))
         gw.audit = audit
-    grants = _load(a.grants)
+    grants = _load(a.grants) if a.grants else cfg.grants
+    if not grants:
+        ap.error("no grants: pass --grants or add a [grants] section to --config")
     session: Session
     if a.approvals_port:
         from .service.app import NewSession, create_app  # needs the 'api' extra (fastapi, uvicorn)

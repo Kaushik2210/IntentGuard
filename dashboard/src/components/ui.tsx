@@ -1,6 +1,6 @@
 "use client";
 
-import { COLOR, Verdict } from "@/lib/api";
+import { COLOR, SessionState, Verdict } from "@/lib/api";
 
 export function Badge({ v }: { v: Verdict }) {
   return (
@@ -11,6 +11,39 @@ export function Badge({ v }: { v: Verdict }) {
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: COLOR[v] }} />
       {v}
     </span>
+  );
+}
+
+const STATE_COLOR: Record<SessionState, string> = {
+  normal: "var(--allow)",
+  restricted: "var(--review)",
+  quarantined: "var(--quarantine)",
+  closed: "var(--muted)",
+};
+
+export function StateBadge({ s }: { s: SessionState }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[11px] font-medium"
+      style={{ color: STATE_COLOR[s], background: `color-mix(in srgb, ${STATE_COLOR[s]} 14%, transparent)` }}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: STATE_COLOR[s] }} />
+      {s}
+    </span>
+  );
+}
+
+/** Cumulative risk 0..1. The marks are where capabilities start switching off (0.4, 0.6, 0.8). */
+export function RiskBar({ risk }: { risk: number }) {
+  const color = risk >= 1 ? "var(--quarantine)" : risk >= 0.4 ? "var(--review)" : "var(--allow)";
+  return (
+    <div role="meter" aria-label="Session risk" aria-valuemin={0} aria-valuemax={1} aria-valuenow={risk}
+         className="relative h-2 w-full overflow-hidden rounded-full bg-panel2">
+      <div className="h-full rounded-full transition-[width]" style={{ width: `${Math.min(1, risk) * 100}%`, background: color }} />
+      {[0.4, 0.6, 0.8].map((m) => (
+        <span key={m} className="absolute top-0 h-full w-px bg-line" style={{ left: `${m * 100}%` }} />
+      ))}
+    </div>
   );
 }
 

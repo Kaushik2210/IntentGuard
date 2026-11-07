@@ -42,6 +42,11 @@ class Approver(BaseModel):
     approver: str
 
 
+class AdminAction(BaseModel):
+    approver: str
+    reason: str = ""
+
+
 def _guard(expected: str | None):
     """Bearer-token check; no token configured means open (local demo only)."""
     def dep(authorization: str | None = Header(None)) -> None:
@@ -54,8 +59,9 @@ def _guard(expected: str | None):
 
 
 def create_app(gateway: Gateway, agent_token: str | None = None,
-               admin_token: str | None = None) -> FastAPI:
-    """agent_token protects /sessions (open) and /call; admin_token protects everything else."""
+               admin_token: str | None = None, default_grants: dict | None = None) -> FastAPI:
+    """agent_token protects /sessions (open) and /call; admin_token protects everything else.
+    default_grants apply to a session opened without grants of its own."""
     agent, admin = _guard(agent_token), _guard(admin_token)
     app = FastAPI(title="IntentGuard", version="0.1.0")
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"],
@@ -65,7 +71,7 @@ def create_app(gateway: Gateway, agent_token: str | None = None,
     by_action: dict[str, dict] = {}
 
     def do_open(body: NewSession):
-        scope = compile_scope(body.task, body.grants)
+        scope = compile_scope(body.task, body.grants or default_grants or {})
         clients[body.session_id] = gateway.open_session(body.session_id, body.agent_id, scope)
         return scope
 
@@ -91,6 +97,41 @@ def create_app(gateway: Gateway, agent_token: str | None = None,
             raise HTTPException(422, f"bad grants: {exc}") from exc
         return jsonable_encoder({"session_id": body.session_id, "scope": scope})
 
+    def summarize(sid: str) -> dict:
+        s = gateway.sessions[sid]
+        mine = [e for e in events if e["session"] == sid]
+        quarantine_at = getattr(getattr(gateway.engine, "cfg", None), "quarantine_at", 1.0)
+        restricted = [k for k in ("network", "shell") if not getattr(s.caps, k)] +                      [k for k in ("files_locked", "db_needs_review") if getattr(s.caps, k)]
+        state = ("closed" if s.closed else "quarantined" if s.risk >= quarantine_at
+                 else "restricted" if restricted else "normal")
+        return {"session_id": sid, "agent_id": s.agent_id, "task": s.scope.task_text, "state": state,
+                "risk": round(s.risk, 3), "restricted": restricted, "taint": s.taint.name,
+                "tags": sorted(set(s.tags)), "denied": s.denied, "calls": len(mine),
+                "last_ts": mine[-1]["ts"] if mine else None,
+                "by_decision": dict(Counter(e["decision"]["decision"] for e in mine))}
+
+    @app.get("/sessions", dependencies=[admin])
+    def list_sessions(limit: int = 100):
+        """Live view of every session: risk, what has been switched off, and how it has been judged."""
+        rows = [summarize(sid) for sid in gateway.sessions]
+        rows.sort(key=lambda r: r["last_ts"] or 0, reverse=True)
+        return rows[:max(1, min(limit, 500))]
+
+    @app.post("/sessions/{sid}/release", dependencies=[admin])
+    def release(sid: str, body: AdminAction):
+        """Lift a lock-out after a human has looked at it. Keeps the record of what the session has read."""
+        if sid not in gateway.sessions:
+            raise HTTPException(404, "no such session")
+        return {"released": sid, "before": gateway.release(sid, body.approver, body.reason),
+                "session": summarize(sid)}
+
+    @app.post("/sessions/{sid}/close", dependencies=[admin])
+    def close(sid: str, body: AdminAction):
+        if sid not in gateway.sessions:
+            raise HTTPException(404, "no such session")
+        gateway.close(sid, body.approver, body.reason)
+        return {"closed": sid, "session": summarize(sid)}
+
     @app.get("/sessions/{sid}", dependencies=[admin])
     def get_session(sid: str):
         s = gateway.sessions.get(sid)
@@ -103,7 +144,7 @@ def create_app(gateway: Gateway, agent_token: str | None = None,
         if sid not in clients:
             raise HTTPException(404, "no such session")
         res = do_call(sid, body.tool, body.args)
-        return jsonable_encoder({"decision": res.decision, "output": res.output})
+        return jsonable_encoder({"decision": res.decision, "output": res.output, "error": res.error})
 
     @app.get("/events", dependencies=[admin])
     def list_events(limit: int = 100):
@@ -170,17 +211,12 @@ DEMO_RUNS = [
 ]
 
 
-def demo_app() -> FastAPI:
-    env = MockEnv()
-    audit_file = os.environ.get("INTENTGUARD_AUDIT_FILE")  # persists the hash chain across restarts
-    admin_token = os.environ.get("INTENTGUARD_ADMIN_TOKEN")
-    app = create_app(Gateway(env.tools(), env.catalog(), PolicyEngine(), AuditLog(audit_file)),
-                     os.environ.get("INTENTGUARD_AGENT_TOKEN"), admin_token)
+def add_demo_seed(app: FastAPI, admin_token: str | None) -> None:
+    """Add POST /demo/seed, which replays synthetic scenarios so the dashboard has data. Demo service only."""
     n = {"i": 0}
 
     @app.post("/demo/seed", dependencies=[_guard(admin_token)])
     def seed():
-        """Replay synthetic scenarios so the dashboard has data. Demo service only."""
         n["i"] += 1
         for agent, task, grants, steps in DEMO_RUNS:
             sid = f"demo{n['i']}-{agent.split()[0].lower()}"
@@ -189,4 +225,12 @@ def demo_app() -> FastAPI:
                 app.state.do_call(sid, tool, args)
         return {"seeded": len(DEMO_RUNS)}
 
+
+def demo_app() -> FastAPI:
+    env = MockEnv()
+    audit_file = os.environ.get("INTENTGUARD_AUDIT_FILE")  # persists the hash chain across restarts
+    admin_token = os.environ.get("INTENTGUARD_ADMIN_TOKEN")
+    app = create_app(Gateway(env.tools(), env.catalog(), PolicyEngine(), AuditLog(audit_file)),
+                     os.environ.get("INTENTGUARD_AGENT_TOKEN"), admin_token)
+    add_demo_seed(app, admin_token)
     return app

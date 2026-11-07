@@ -24,13 +24,16 @@ class ToolResult:
     output: Any = None
     action_id: str = ""
     risk: float = 0.0
+    error: str | None = None  # allowed by policy, but the tool itself failed
 
     @property
     def allowed(self) -> bool:
         return self.decision == "ALLOW"
 
     def message(self) -> str:
-        """What a model should be told when the call did not run."""
+        """What a model should be told when the call did not run, or ran and failed."""
+        if self.error:
+            return f"TOOL ERROR: the call was allowed but the tool failed: {self.error}"
         if self.decision == "REVIEW":
             return (f"NEEDS HUMAN APPROVAL (IntentGuard, action {self.action_id}): {self.explanation} "
                     "Do not retry the same call. Tell the user it is waiting for approval.")
@@ -52,7 +55,7 @@ class InProcessSession:
         res = self._client.call(tool, **args)
         d = res.decision
         return ToolResult(d.decision.value, d.explanation, list(d.fired_rules), res.output, d.action_id,
-                          d.risk_score)
+                          d.risk_score, res.error)
 
 
 Transport = Callable[[str, str, dict, dict], dict]  # (method, path, body, headers) -> json
@@ -82,7 +85,7 @@ class HTTPSession:
         r = self._send("POST", f"/sessions/{self.session_id}/call", {"tool": tool, "args": args}, self._headers)
         d = r["decision"]
         return ToolResult(d["decision"], d.get("explanation", ""), list(d.get("fired_rules", [])),
-                          r.get("output"), d.get("action_id", ""), d.get("risk_score", 0.0))
+                          r.get("output"), d.get("action_id", ""), d.get("risk_score", 0.0), r.get("error"))
 
 
 def open_http_session(base_url: str, task: str, grants: dict, agent_id: str = "agent",

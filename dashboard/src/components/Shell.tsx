@@ -1,12 +1,13 @@
 "use client";
 
-import { LayoutDashboard, ScrollText, ShieldCheck } from "lucide-react";
+import { Activity, LayoutDashboard, ScrollText, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Stats, usePoll } from "@/lib/api";
 
 const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/sessions", label: "Sessions", icon: Activity },
   { href: "/approvals", label: "Approvals", icon: ShieldCheck },
   { href: "/audit", label: "Audit log", icon: ScrollText },
 ];

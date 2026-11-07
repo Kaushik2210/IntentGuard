@@ -38,6 +38,23 @@ export interface Event {
   decision: Decision;
 }
 
+export type SessionState = "normal" | "restricted" | "quarantined" | "closed";
+
+export interface SessionRow {
+  session_id: string;
+  agent_id: string;
+  task: string;
+  state: SessionState;
+  risk: number;
+  restricted: string[];
+  taint: string;
+  tags: string[];
+  denied: number;
+  calls: number;
+  last_ts: number | null;
+  by_decision: Partial<Record<Verdict, number>>;
+}
+
 export interface Stats {
   inspected: number;
   by_decision: Partial<Record<Verdict, number>>;

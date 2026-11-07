@@ -59,7 +59,7 @@ def _make(session: Session, name: str, description: str, schema: type[BaseModel]
     def run(**kwargs: Any) -> str:
         args = {k: v for k, v in kwargs.items() if v is not None}
         res = session.call(name, **args)
-        return str(res.output) if res.allowed else res.message()
+        return str(res.output) if res.allowed and not res.error else res.message()
 
     return StructuredTool.from_function(func=run, name=name, description=description, args_schema=schema)
 

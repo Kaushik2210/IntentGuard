@@ -13,12 +13,31 @@ pip install -e .[dev]
 pytest
 ```
 
+## Quick start: the `intentguard` command
+
+```
+pip install -e ".[dev]"          # installs the `intentguard` command
+intentguard init                 # writes a documented intentguard.toml to edit
+intentguard check-config intentguard.toml
+intentguard serve --demo         # HTTP service + dashboard backend, mock tools, http://127.0.0.1:8000
+intentguard mcp --demo --task "Read research/paper.pdf and summarize it." --grants '{"resources":["research/*"]}'   # MCP gateway
+intentguard verify-audit audit.jsonl                                       # is the hash chain intact?
+```
+
+One TOML file configures everything: the engine (quarantine level, the risk ladder that switches network, shell and
+files off), the catalog (which files and tables are sensitive, which destinations are trusted or denylisted), which
+tools exist and which argument is the resource or destination, and default grants for sessions opened without their
+own. Unknown keys and bad values are errors that name the section. `intentguard serve --upstream "CMD" --config
+intentguard.toml` puts the service in front of an existing MCP server. The service refuses to listen on anything but
+localhost unless both `--agent-token` and `--admin-token` are set.
+
 ## Status (research prototype)
 
 Implemented: deterministic policy engine (task scope, taint/egress, content lineage of sensitive data,
 sequence risk, injection-aware output scan, dynamic permission reduction, cross-session risk carry-over,
 database table classification, session approval memory), hash-chained audit log, approval queue, FastAPI
-service with agent/admin bearer tokens, Next.js dashboard, HTTP-only agent process, a LangChain/LangGraph
+service with agent/admin bearer tokens, Next.js dashboard with session admin (release and close), a config file and the `intentguard`
+command, HTTP-only agent process, structured errors when a tool fails after being allowed, a LangChain/LangGraph
 adapter, an MCP gateway (demo and proxy modes, with an approval channel that waits for a human in the
 dashboard), IntentGuardBench (hand-written, seeded-generated, adversarial and red-team sets with dev and
 held-out halves, ablations, baselines incl. LlamaFirewall local scanners and Llama Prompt Guard 2), and
@@ -38,8 +57,7 @@ an author, and several weaknesses are documented there (F2, F5 to F26). `python 
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
-`python -m pytest -q` (77 passing locally; 73 passed and 1 skipped in a clean `.[dev]` environment, where the
-LangChain tests skip).
+`python -m pytest -q` (111 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
 
 ## Use it with an agent framework (LangChain / LangGraph)
 
@@ -97,9 +115,16 @@ the upstream; `tests/test_mcp_approval.py` covers approve, reject, timeout and a
 
 ```
 pip install -e .[dev]
-uvicorn intentguard.service.app:demo_app --factory --port 8000
+intentguard serve --demo --port 8000        # or: uvicorn intentguard.service.app:demo_app --factory
 cd dashboard; npm install; npm run dev     # http://localhost:3000
 ```
+
+The dashboard has an Overview, **Sessions** (live risk, what has been switched off, how each call was judged, and
+admin actions), Approvals and an Audit log. On the Sessions page a human can **release** a locked-out session after
+reviewing it, or **close** it. Releasing restores the switched-off capabilities and clears the session's risk and the
+agent's carried-over risk, but keeps the record of sensitive data the session has already read, so an exposure is never
+forgotten; both actions need the admin token and go into the audit log with the reason. The same actions are
+`POST /sessions/{id}/release` and `/close`, and `GET /sessions` lists every session.
 
 Click "Load sample scenarios" on the Overview page to replay synthetic scenarios. With no tokens set
 the service is open and keeps sessions in memory; it is a local demo only.
