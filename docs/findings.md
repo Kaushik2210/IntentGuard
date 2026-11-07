@@ -569,12 +569,14 @@ Reading:
   unprotected runs against 0 of 32 guarded, over two models. Still a stress test: forceful synthetic injections, a
   neutral prompt, an oracle approver, same author.
 - The guarded completion cost is real: on the "message from the user" memo the legitimate email was sent in 4 of 8
-  guarded runs. In each failing run the model first obeyed the injection by trying to read `secrets/app.env`. The
-  gateway blocked that read, then blocked the later legitimate email to bob. Cause, from the blocking messages:
-  that single blocked read costs 0.5 risk because one attempted action trips three rules at once (SCOPE-001 outside
-  the task, SCOPE-003 above the allowed sensitivity, SCOPE-005 not named in the task) and their risks add; 0.5 is
-  past the 0.4 step that switches network access off (PERM-002), and the sequence rule SEQ-002 then pushes the session
-  to quarantine. It is the designed "one hijacked step locks the rest of the task" behaviour first seen in F11.
+  guarded runs. [Corrected in F26: in all 4 failing runs the model obeyed the injection by trying to read
+  `secrets/app.env`, the gateway blocked that read, and the model then ended its turn without ever trying the email to
+  bob. They were not lock-outs.] A lock-out mechanism does exist and was observed in the wording-tweak batch below
+  (2 of 8 runs), where the model kept going: one blocked read costs 0.5 risk because one attempted action trips three
+  rules at once (SCOPE-001 outside the task, SCOPE-003 above the allowed sensitivity, SCOPE-005 not named in the task)
+  and their risks add; 0.5 is past the 0.4 step that switches network access off (PERM-002), and the sequence rule
+  SEQ-002 then pushes the session to quarantine. It is the designed "one hijacked step locks the rest of the task"
+  behaviour first seen in F11.
 - Two mitigations were tried and not kept, because neither helped: (1) telling the model in the block message to carry
   on with the still-authorized parts of the task (the model then kept calling tools but the legitimate email was
   blocked by the network step anyway: 4 of 8 again); (2) not letting a blocked read count as "sensitive data
@@ -611,12 +613,47 @@ accumulation lets its final send through.
 
 Stress test (qwen2.5:7b, neutral prompt, the "message from the user" memo, guarded condition, 8 runs, automatic
 approver): the legitimate email was sent in 6 of 8 runs with the cap and 4 of 8 without; unauthorized calls executed in
-0 of 8 either way. The cap recovers the cases where a blocked read had shut the network (run 0 sent the email through
-review); the two remaining misses are the model abandoning the task after the first block. With n=8 the 4 vs 6 is not
-significant on its own.
+0 of 8 either way. [Corrected in F26: the earlier 4 of 8 batch had no lock-outs at all, so this does not show the cap rescuing lock-outs; the difference between 4 and 6 is within the variation in how often the model gives up.]
 
 Reading: the cap trades protection against a real multi-step attack class for roughly two more completed tasks in the
 stress test, and it is why the choice is a policy decision rather than a bug fix. It is left off by default; if
 adopted, the generated sets' ASR roughly doubles and `recon_then_egress` needs another mitigation. A more targeted
 alternative, not built: make the network step a REVIEW rather than a BLOCK, which keeps the risk accumulation (and so
 the protection against the multi-step attack) but lets a human approve the one legitimate send.
+
+## F26. Reviewed lock-out, and a correction to F24 and F25
+
+Experiment (off by default): `EngineConfig(lockout_review=True)`, MCP gateway `--lockout-review`. The capability locks
+(PERM-002/003/004) become reviews instead of blocks, and reaching the quarantine threshold sends an action that is not
+already a hard block to a human instead of freezing it. Changing only the network rule would not do: in the stress scenario
+the same email also reaches the quarantine threshold. Benchmark comparison with `python -m bench.compare_variants`:
+- Harmful steps executed are identical to the current engine on all 13 sets (a review is "not executed" by definition, so
+  the variant looks safe by construction).
+- What changes is how many harmful steps now wait for a human: on the fresh generated set 38 become 69, on the held-out
+  set 67 become 96, on seq 8 become 15. If a careless human approved every review, attack success on the fresh set would be
+  about 36% instead of about 20% under the current engine. Legitimate steps interrupted do not change (the benchmark
+  episodes have no lock-out followed by a legitimate send).
+
+Stress test (qwen2.5:7b, neutral prompt, "message from the user" memo, guarded, 8 runs): legitimate email sent in 4 of 8.
+
+Correction. F24 said the failing guarded runs were lock-outs, and F25 said the cap recovered such runs. Tabulating every
+guarded batch by what happened to the legitimate email shows otherwise:
+
+| Batch (8 runs each) | Email sent | Locked out (email to bob tried, never sent) | Model gave up (never tried it) |
+|---|---|---|---|
+| current engine | 4 | 0 | 4 |
+| current engine, wording tweak (F24) | 4 | 2 | 2 |
+| risk cap 0.3 (F25) | 6 | 0 | 2 |
+| reviewed lock-out (this entry) | 4 | 0 | 4 |
+
+Reading:
+- Most of the lost completion in these runs is the model ending its turn after its first blocked call; no policy variant
+  changes that. Lock-outs are real (2 of 8 in the wording-tweak batch, and the mechanism is pinned by unit tests) but were
+  rare here.
+- The cap's 4-to-6 and the reviewed lock-out's 4 are both within the spread of how often the model gives up (4, 2, 2, 4),
+  so neither variant shows a measured completion benefit. Each has a cost: the cap roughly doubles attack success on the
+  generated sets (F25); the reviewed lock-out puts many more harmful steps in front of a human.
+- Decision: neither experiment is adopted; both stay off by default. For the paper: the lock-out trade-off exists and a
+  unit test shows it, but this evidence does not show that relaxing it improves completion.
+- Lesson: I drew the F24 diagnosis from a few printed runs and did not tabulate every batch by outcome until now. Count
+  first, then explain.

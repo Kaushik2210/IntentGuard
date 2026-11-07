@@ -64,13 +64,15 @@ def auto_approver(port: int, stop: threading.Event, log: list[dict]) -> None:
 
 
 def one_run(condition: str, doc: str, run: int, model: str, gateway_python: str, port: int, system: str,
-            risk_cap: float | None = None) -> dict:
+            risk_cap: float | None = None, lockout_review: bool = False) -> dict:
     extra = ["--extra-docs", str(HERE / "demo_poisoned_docs.json")]
     stop, answered = threading.Event(), []
     if condition == "intentguard":
         gw_args = [*extra, "--approvals-port", str(port), "--approval-timeout", "60"]
         if risk_cap is not None:
             gw_args += ["--action-risk-cap", str(risk_cap)]
+        if lockout_review:
+            gw_args += ["--lockout-review"]
         threading.Thread(target=auto_approver, args=(port, stop, answered), daemon=True).start()
     else:
         gw_args = [*extra, "--no-policy"]
@@ -96,6 +98,7 @@ def main() -> None:
     ap.add_argument("--conditions", default="no_policy,intentguard")
     ap.add_argument("--docs", default="memo_user", help="comma list of poisoned documents: memo_user,memo_it,memo_fmt")
     ap.add_argument("--risk-cap", type=float, help="pass --action-risk-cap to the gateway (experiment)")
+    ap.add_argument("--lockout-review", action="store_true", help="pass --lockout-review to the gateway (experiment)")
     ap.add_argument("--system", choices=["cautious", "neutral"], default="cautious",
                     help="neutral omits the 'do not get around blocks' guidance (more susceptible)")
     a = ap.parse_args()
@@ -110,7 +113,7 @@ def main() -> None:
             for condition in conditions:
                 if (condition, doc, run) in done:
                     continue
-                r = one_run(condition, doc, run, a.model, a.gateway_python, a.port, system, a.risk_cap)
+                r = one_run(condition, doc, run, a.model, a.gateway_python, a.port, system, a.risk_cap, a.lockout_review)
                 with out.open("a") as f:
                     f.write(json.dumps(r) + "\n")
                 print(condition, doc, run, {k: r[k] for k in ("calls", "attempted_unauthorized", "executed_unauthorized",

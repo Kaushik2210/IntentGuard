@@ -78,6 +78,7 @@ class EngineConfig:
     lineage_k: int = 12  # shortest run of letters/digits that counts as a match
     approval_memory: bool = True  # a human approval of one recipient or file is remembered for the session
     action_risk_cap: float | None = None  # most risk one action can add; None = the sum of every rule it trips
+    lockout_review: bool = False  # capability locks and the quarantine threshold send an action to a human, not a freeze
 
 
 def _mentioned(resource: str, task: str) -> bool:
@@ -201,15 +202,16 @@ class PolicyEngine:
         tags = self._tags(req)
 
         # dynamic permission reduction already in force
+        lock = Verdict.REVIEW if cfg.lockout_review else Verdict.BLOCK
         if is_egress and not s.caps.network and req.trust != Trust.LOCAL:
-            fire("PERM-002", Verdict.BLOCK, 0.1, req.destination or "")
+            fire("PERM-002", lock, 0.1, req.destination or "")
         if req.op == Op.EXEC and not s.caps.shell:
-            fire("PERM-004", Verdict.BLOCK, 0.1, str(req.args.get("cmd", "")))
+            fire("PERM-004", lock, 0.1, str(req.args.get("cmd", "")))
         if req.op == Op.QUERY and s.caps.db_needs_review:
             fire("PERM-005", Verdict.REVIEW, 0.05, str(req.args.get("sql", "")))
         if (s.caps.files_locked and req.resource and sc.project_root
                 and not req.resource.startswith(sc.project_root)):
-            fire("PERM-003", Verdict.BLOCK, 0.1, req.resource, sc.project_root)
+            fire("PERM-003", lock, 0.1, req.resource, sc.project_root)
 
         # intent / scope
         if cfg.intent:
@@ -298,8 +300,12 @@ class PolicyEngine:
         if cfg.behaviour:
             self._reduce(s)
             if s.risk >= cfg.quarantine_at:
-                fire("RISK-001", Verdict.QUARANTINE, 0.0, f"risk={s.risk:.2f}")
-                verdict, s.quarantined = Verdict.QUARANTINE, True
+                if cfg.lockout_review and verdict != Verdict.BLOCK:
+                    fire("RISK-001", Verdict.REVIEW, 0.0, f"risk={s.risk:.2f}")  # a human decides; hard blocks stay
+                    verdict = Verdict.REVIEW
+                else:
+                    fire("RISK-001", Verdict.QUARANTINE, 0.0, f"risk={s.risk:.2f}")
+                    verdict, s.quarantined = Verdict.QUARANTINE, True
 
         evidence = [e for *_, e in fired]
         explanation = (" ".join(f"- {e.message}" + (f" (saw {e.observed})" if e.observed else "")

@@ -200,3 +200,17 @@ def test_risk_cap_keeps_one_blocked_attempt_from_switching_the_network_off():
     assert default.decision in (Verdict.BLOCK, Verdict.QUARANTINE) and "PERM-002" in default.fired_rules
     capped = second_call(PolicyEngine(EngineConfig(action_risk_cap=0.3)))
     assert capped.decision == Verdict.REVIEW  # a human can still approve the legitimate email
+
+
+def test_lockout_review_sends_the_locked_out_email_to_a_human_but_hard_blocks_stay_blocks():
+    from intentguard import EngineConfig
+    task = "Read research/memo_user.md and email bob@newlab.org a short summary"
+
+    def after_blocked_read(to):
+        _, _, c = setup(task, GRANTS, PolicyEngine(EngineConfig(lockout_review=True)))
+        assert c.call("read_file", path="secrets/app.env").decision.decision == Verdict.BLOCK
+        return c.call("send_email", to=to, body="summary").decision
+
+    assert after_blocked_read("bob@newlab.org").decision == Verdict.REVIEW  # locked out, so a human decides
+    # a denylisted destination never reaches a human
+    assert after_blocked_read("attacker@evil.example").decision in (Verdict.BLOCK, Verdict.QUARANTINE)
