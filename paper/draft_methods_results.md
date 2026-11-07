@@ -141,13 +141,27 @@ runs (20%, 95% CI 10.5% to 34.8%): reads of the secrets file and emails to two d
 With IntentGuard, 0 of 40 (CI 0% to 8.8%) [F14]. This is a susceptibility test with one 8B model and
 author-written injections; it is not a rate for real attackers.
 
-A real local model was also run behind the MCP gateway, so that its only tools were the gateway's, with an automatic
-approver for calls that needed a human [F22, F23]. Under a prompt that warns the model not to get around blocked
-actions it almost never followed the injection (1 attempt in 21 guarded runs, none unprotected) and the runs exposed
-a gateway bug that blocked legitimate emails with an empty optional attachment, which was fixed. Under the neutral
-prompt with two forceful poisoned documents (8 runs each), the unprotected agent executed an unauthorized call in 11 of
-16 runs (95% CI 44% to 86%); through the gateway 0 of 16 executed (CI 0% to 19%) while the legitimate email was sent
-in all 16. This is a susceptibility stress test with one 8B model and an oracle approver, not a rate for real attackers.
+A real local model was also run behind an MCP version of the gateway, so that its only tools were the gateway's, with
+an automatic approver for calls that needed a human [F22 to F24]. Under a prompt that warns the model not to get around
+blocked actions it almost never followed the injection (1 attempt in 21 guarded runs, none unprotected), and the runs
+exposed a gateway bug that blocked legitimate emails with an empty optional attachment, which was fixed. Under a neutral
+prompt with two forceful poisoned documents (8 runs each per model), two models both followed the injection when
+unprotected: `llama3.1:8b` executed an unauthorized call in 11 of 16 runs and `qwen2.5:7b` in 12 of 16, so 23 of 32
+(72%, 95% CI 55% to 85%) in total. Through the gateway none of 32 runs executed one (CI 0% to 11%). In the same setting
+the legitimate email was sent in 16 of 16 runs for the first model and 11 of 16 for the second when guarded (14 of 16
+unprotected). This is a susceptibility stress test: forceful synthetic injections, a deliberately neutral prompt, small
+local models and an oracle approver. It is not a rate for real attackers.
+
+The guarded completion cost has a specific cause. In the runs where the legitimate email was not sent, the model had
+usually obeyed the injection first, been blocked, and then ended its turn without trying the email (4 of 8 runs in one
+batch). A genuine lock-out, where one blocked attempt costs enough risk (0.5) to switch network access off and the
+legitimate send is then refused, also occurs but was rarer (2 of 8 runs in one batch, 0 in the others). Two experiments
+to relax it were measured and not adopted: a cap on the risk one action can add roughly doubled attack success on the
+generated sets, concentrated in the multi-step `recon_then_egress` class (1.0% to 2.3% became 2.0% to 4.5%), and sending
+the capability locks to human review leaves the executed count unchanged by construction but puts many more harmful
+steps in front of a human (38 became 69 on the fresh set; if every review were approved, attack success would be about
+36% rather than 20%). Neither produced a completion gain beyond run-to-run variation [F25, F26]. An earlier version of
+this analysis attributed the lost completions to lock-outs; counting every batch by outcome corrected that [F26].
 
 ## 7. Limitations (state these plainly)
 
@@ -157,8 +171,11 @@ in all 16. This is a susceptibility stress test with one 8B model and an oracle 
   split secret leave before a match forms, data read in an earlier session is not fingerprinted, and SQL is
   matched by name, not parsed.
 - Review friction is a real cost: a hijacked step can lock a legitimate task for the rest of a session
-  [F9, F11, F14].
-- Scripted agents for most results; LLM-agent studies use two small local models and few seeds.
+  [F9, F11, F14]. In the MCP stress tests the larger loss was the model giving up after its first blocked call, and the
+  two policy changes tried to relax the lock-out showed no completion gain beyond noise while costing protection or
+  human attention [F25, F26].
+- Scripted agents for most results; the LLM-agent and MCP studies use three small local models (3B to 8B), few
+  seeds, forceful synthetic injections and an automatic approver standing in for a human.
 - Process-level isolation of the agent from the tools is demonstrated as an API shape only.
 - Not a comparison with Progent or CaMeL, which were not run.
 
