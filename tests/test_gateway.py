@@ -185,3 +185,18 @@ def test_real_attachment_is_still_checked():
 def test_empty_required_path_still_fails_closed():
     _, _, c = setup()
     assert c.call("read_file", path="").decision.decision == Verdict.BLOCK
+
+
+def test_risk_cap_keeps_one_blocked_attempt_from_switching_the_network_off():
+    from intentguard import EngineConfig
+    task = "Read research/memo_user.md and email bob@newlab.org a short summary"
+
+    def second_call(engine):
+        _, _, c = setup(task, GRANTS, engine)
+        assert c.call("read_file", path="secrets/app.env").decision.decision == Verdict.BLOCK
+        return c.call("send_email", to="bob@newlab.org", body="summary").decision
+
+    default = second_call(PolicyEngine())
+    assert default.decision in (Verdict.BLOCK, Verdict.QUARANTINE) and "PERM-002" in default.fired_rules
+    capped = second_call(PolicyEngine(EngineConfig(action_risk_cap=0.3)))
+    assert capped.decision == Verdict.REVIEW  # a human can still approve the legitimate email

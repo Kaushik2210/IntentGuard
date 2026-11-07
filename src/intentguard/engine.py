@@ -77,6 +77,7 @@ class EngineConfig:
     lineage: bool = True  # outbound content that contains sensitive data read in this session
     lineage_k: int = 12  # shortest run of letters/digits that counts as a match
     approval_memory: bool = True  # a human approval of one recipient or file is remembered for the session
+    action_risk_cap: float | None = None  # most risk one action can add; None = the sum of every rule it trips
 
 
 def _mentioned(resource: str, task: str) -> bool:
@@ -282,7 +283,10 @@ class PolicyEngine:
                 verdict = v
 
         # update session state
-        s.risk = min(1.0, s.risk + sum(r for _, _, r, _ in fired))
+        added = sum(r for _, _, r, _ in fired)
+        if cfg.action_risk_cap is not None:  # one attempt that trips several rules is still one attempt
+            added = min(added, cfg.action_risk_cap)
+        s.risk = min(1.0, s.risk + added)
         if cfg.behaviour:
             s.tags.extend(tags)
         if verdict in (Verdict.BLOCK, Verdict.QUARANTINE):

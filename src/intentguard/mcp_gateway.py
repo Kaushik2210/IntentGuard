@@ -31,7 +31,7 @@ from typing import Any, TextIO
 
 from .audit import AuditLog
 from .client import InProcessSession, Session, ToolResult
-from .engine import PolicyEngine
+from .engine import EngineConfig, PolicyEngine
 from .gateway import Catalog, Gateway, Tool
 from .mock_env import MockEnv
 from .models import ActionRequest, Classification, Decision, Op, Trust, Verdict
@@ -275,6 +275,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--config", help="JSON file mapping upstream tools to operations (proxy mode)")
     ap.add_argument("--agent-id", default="mcp-client")
     ap.add_argument("--no-policy", action="store_true", help="demo only: allow every call (comparison baseline)")
+    ap.add_argument("--action-risk-cap", type=float, help="most risk a single action can add (experiment; default none)")
     ap.add_argument("--audit-file", help="persist the hash-chained audit log here")
     ap.add_argument("--approvals-port", type=int, help="serve the approval API and dashboard backend on 127.0.0.1:PORT; "
                                                        "calls that need approval wait for a human")
@@ -290,7 +291,7 @@ def main(argv: list[str] | None = None) -> None:
             for path, body in _load(a.extra_docs).items():
                 mock_env.FILES[path] = (body, Classification.INTERNAL)
         env = MockEnv()
-        engine = _AllowAll() if a.no_policy else PolicyEngine()
+        engine = _AllowAll() if a.no_policy else PolicyEngine(EngineConfig(action_risk_cap=a.action_risk_cap))
         gw, exposed = Gateway(env.tools(), env.catalog(), engine, audit), DEMO_TOOLS
     else:
         if not a.config:
