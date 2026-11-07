@@ -17,21 +17,29 @@ pytest
 
 Implemented: deterministic policy engine (task scope, taint/egress, content lineage of sensitive data,
 sequence risk, injection-aware output scan, dynamic permission reduction, cross-session risk carry-over,
-database table classification), hash-chained audit log, approval queue, FastAPI service with agent/admin
-bearer tokens, Next.js dashboard, HTTP-only agent process, IntentGuardBench (hand-written, seeded-generated,
-adversarial and red-team sets with dev and held-out halves, ablations, baselines incl. LlamaFirewall local
-scanners and Llama Prompt Guard 2), and an LLM-driven agent harness for local Ollama models.
+database table classification, session approval memory), hash-chained audit log, approval queue, FastAPI
+service with agent/admin bearer tokens, Next.js dashboard, HTTP-only agent process, a LangChain/LangGraph
+adapter, an MCP gateway (demo and proxy modes, with an approval channel that waits for a human in the
+dashboard), IntentGuardBench (hand-written, seeded-generated, adversarial and red-team sets with dev and
+held-out halves, ablations, baselines incl. LlamaFirewall local scanners and Llama Prompt Guard 2), and
+harnesses that run real local Ollama models as agents, directly and through the MCP gateway.
+
+Experiments that are built but off by default because they did not pay for themselves: a per-action risk cap
+and a reviewed lock-out (see F25 and F26).
 
 Not done: an independent (non-author) episode set, LlamaFirewall AlignmentCheck (needs an external LLM),
 comparison runs of Progent or CaMeL, verified network-level isolation (Docker draft untested), OPA backend,
-Postgres/Redis. Known open weaknesses: paraphrased or substituted exfiltration, split secrets whose first
-piece is short, and review friction on legitimate tasks (see F16 to F18).
+Postgres/Redis, MCP resources/prompts/HTTP transport. Known open weaknesses: paraphrased or substituted
+exfiltration, split secrets whose first piece is short, review friction on legitimate tasks, and a session that
+is locked out after one blocked attempt (F16 to F18, F24 to F26).
 
 Read `docs/findings.md` before quoting any number: results are preliminary, the engine and benchmarks share
-an author, and several weaknesses are documented there (F2, F5 to F18). `python -m bench.run` regenerates
+an author, and several weaknesses are documented there (F2, F5 to F26). `python -m bench.run` regenerates
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
-literature survey. Tests: `python -m pytest -q` (43 passing).
+literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
+`python -m pytest -q` (77 passing locally; 73 passed and 1 skipped in a clean `.[dev]` environment, where the
+LangChain tests skip).
 
 ## Use it with an agent framework (LangChain / LangGraph)
 
