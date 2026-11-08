@@ -52,7 +52,7 @@ and a reviewed lock-out (see F25 and F26).
 
 Not done: an independent (non-author) episode set, LlamaFirewall AlignmentCheck (needs an external LLM),
 comparison runs of the real Progent, The Task Shield or CaMeL (only stand-ins for the first two, F27), verified network-level isolation (Docker draft untested), OPA backend,
-Postgres/Redis, MCP resources/prompts/HTTP transport. Known open weaknesses: paraphrased or substituted
+Postgres/Redis, MCP resources/prompts/SSE streaming. Known open weaknesses: paraphrased or substituted
 exfiltration, split secrets whose first piece is short, review friction on legitimate tasks, and a session that
 is locked out after one blocked attempt (F16 to F18, F24 to F26).
 
@@ -61,7 +61,7 @@ an author, and several weaknesses are documented there (F2, F5 to F26). `python 
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
-`python -m pytest -q` (129 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+`python -m pytest -q` (139 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
 
 ## Guard your own Python functions
 
@@ -106,7 +106,7 @@ agent = create_agent(model, guarded_tools(session))
 
 ## MCP gateway
 
-`intentguard.mcp_gateway` is an MCP server (stdio, standard library only) that authorizes every `tools/call`
+`intentguard.mcp_gateway` is an MCP server (stdio or Streamable HTTP, standard library only) that authorizes every `tools/call`
 against the user's task before it runs. A blocked call comes back as an MCP error result with the reason.
 
 ```bash
@@ -123,6 +123,13 @@ destination, plus optional `classes` (resource sensitivity), `trust` (destinatio
 is not listed is never shown to the client, and a call to it is blocked and audited. Point an MCP host
 (Claude Desktop, Cursor, an agent SDK) at the command above instead of at the real server.
 
+**HTTP transport.** Add `--http-port 8000` to serve `POST http://127.0.0.1:8000/mcp` instead of stdio, for hosts that
+connect to a URL. It answers with plain JSON (no SSE streaming; GET returns 405), caps the body at 1 MB, refuses a
+browser `Origin` that is not local (stops DNS rebinding from a web page; allow more with `--http-origin`), and
+requires `Authorization: Bearer <token>` when you pass `--http-token`. Listening on a non-loopback `--http-host`
+is refused unless a token is set. All clients share the gateway's one IntentGuard session, as with stdio, so run
+one gateway per user task; there is no TLS, so put it behind a reverse proxy before exposing it.
+
 **Approvals.** Add `--approvals-port 8765` (needs `pip install -e ".[api]"`) and the gateway also serves the
 approval API on `127.0.0.1:8765`, the same endpoints the dashboard uses. A call that needs a human
 (unapproved recipient, loosely named sensitive file) then waits instead of failing: the agent's `tools/call`
@@ -132,11 +139,11 @@ timeout) the pending action is cancelled, so a late approval cannot run it behin
 approval is remembered for that recipient or file for the rest of the session. The API has no token unless
 you pass `--admin-token`; it binds to localhost only.
 
-Implemented: initialize, ping, tools/list, tools/call. Not implemented: resources, prompts, sampling, the HTTP
-transport, and per-request cancellation notifications. Checked against the official `mcp` Python SDK client
+Implemented: initialize, ping, tools/list, tools/call. Not implemented: resources, prompts, sampling, SSE
+streaming, per-client sessions, and per-request cancellation notifications. Checked against the official `mcp` Python SDK client
 (2.3.0): initialize, list and call, including a blocked call, work. `tests/test_mcp_gateway.py` covers the
 protocol, the stdio process, and proxying a real child MCP server, including that a blocked call never reaches
-the upstream; `tests/test_mcp_approval.py` covers approve, reject, timeout and a real process approved over HTTP.
+the upstream; `tests/test_mcp_http.py` covers the HTTP transport, its origin, token and size checks, and a real process; `tests/test_mcp_approval.py` covers approve, reject, timeout and a real process approved over HTTP.
 
 ## Dashboard (demo)
 

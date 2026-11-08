@@ -10,10 +10,13 @@ Demo mode serves the mock tools (synthetic data). Proxy mode starts an existing 
 and re-exposes only the tools named in the config; each call is authorized by the policy engine before it is
 forwarded. A tool that is not in the config is not listed, and a call to it is blocked and audited (fail closed).
 
+Add `--http-port N` to serve the Streamable HTTP transport (POST /mcp on 127.0.0.1) instead of stdio, for hosts
+that connect to a URL. See `make_http_server` for what it checks.
+
 Implemented: initialize, notifications/initialized, ping, tools/list, tools/call. Not implemented: resources,
-prompts, sampling, HTTP transport, pagination, list-changed notifications. A call that needs human approval
-(REVIEW) is reported to the model as not executed; there is no approval channel over stdio, so approvals need
-the HTTP service and dashboard.
+prompts, sampling, SSE streaming, per-client sessions, pagination, list-changed notifications. A call that needs
+human approval (REVIEW) is reported to the model as not executed unless `--approvals-port` is used, which adds the
+approval API and dashboard backend.
 """
 
 from __future__ import annotations
@@ -139,6 +142,92 @@ class McpGateway:
             if out is not None:
                 stdout.write(json.dumps(out) + "\n")
                 stdout.flush()
+
+
+MAX_BODY = 1_000_000  # bytes; a tool call is small, so refuse anything larger
+
+
+def _local_origin(origin: str) -> bool:
+    from urllib.parse import urlsplit
+    return (urlsplit(origin).hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+
+def make_http_server(gateway: McpGateway, host: str = "127.0.0.1", port: int = 0, token: str | None = None,
+                     allowed_origins: tuple[str, ...] = ()) -> Any:
+    """MCP Streamable HTTP transport (POST only, JSON responses, no streaming) for `gateway`.
+
+    A client POSTs one JSON-RPC message (or a batch) to `/mcp`. A request gets a JSON response; a notification gets
+    202 with no body. GET returns 405 because this server never pushes messages. Protections:
+      - an `Origin` header, if present, must be a local one or listed in `allowed_origins` (blocks DNS rebinding
+        from a web page);
+      - if `token` is set, `Authorization: Bearer <token>` is required, compared in constant time;
+      - the request body is capped at MAX_BODY bytes.
+    All clients share the gateway's single IntentGuard session, as in stdio mode. Calls are serialised by a lock
+    because the gateway and session are not thread-safe.
+    """
+    import hmac
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_: Any) -> None:  # keep stderr for the gateway's own messages
+            pass
+
+        def _send(self, code: int, body: dict | list | None = None) -> None:
+            data = json.dumps(body).encode() if body is not None else b""
+            self.send_response(code)
+            if body is not None:
+                self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _refuse(self) -> bool:
+            origin = self.headers.get("Origin")
+            if origin and not (_local_origin(origin) or origin in allowed_origins):
+                self._send(403, McpGateway._err(None, -32600, "origin not allowed"))
+                return True
+            if token is not None:
+                given = self.headers.get("Authorization", "")
+                if not hmac.compare_digest(given.encode(), f"Bearer {token}".encode()):
+                    self._send(401, McpGateway._err(None, -32600, "missing or wrong bearer token"))
+                    return True
+            return False
+
+        def do_GET(self) -> None:
+            if not self._refuse():
+                self._send(405, McpGateway._err(None, -32600, "this server does not stream; use POST"))
+
+        do_DELETE = do_GET
+
+        def do_POST(self) -> None:
+            if self._refuse():
+                return
+            if self.path.split("?")[0] != "/mcp":
+                return self._send(404, McpGateway._err(None, -32600, "the MCP endpoint is /mcp"))
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return self._send(411, McpGateway._err(None, -32600, "Content-Length required"))
+            if not 0 <= length <= MAX_BODY:
+                return self._send(413, McpGateway._err(None, -32600, "request body too large"))
+            try:
+                msg = json.loads(self.rfile.read(length))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return self._send(400, McpGateway._err(None, -32700, "parse error"))
+            batch = msg if isinstance(msg, list) else [msg]
+            if not batch:
+                return self._send(400, McpGateway._err(None, -32600, "empty batch"))
+            with lock:
+                outs = [gateway.handle(m) if isinstance(m, dict) else McpGateway._err(None, -32600, "invalid request")
+                        for m in batch]
+            outs = [o for o in outs if o is not None]
+            if not outs:
+                return self._send(202)
+            self._send(200, outs if isinstance(msg, list) else outs[0])
+
+    return ThreadingHTTPServer((host, port), Handler)
 
 
 class ApprovalSession:
@@ -295,9 +384,15 @@ def main(argv: list[str] | None = None) -> None:
                                                        "calls that need approval wait for a human")
     ap.add_argument("--approval-timeout", type=float, default=45.0, help="seconds to wait for a human (default 45)")
     ap.add_argument("--admin-token", help="bearer token for the approval API (default: none, local use only)")
+    ap.add_argument("--http-port", type=int, help="serve MCP over Streamable HTTP (POST /mcp) instead of stdio")
+    ap.add_argument("--http-host", default="127.0.0.1", help="address for --http-port (default 127.0.0.1)")
+    ap.add_argument("--http-token", help="bearer token clients must send; required unless the host is loopback")
+    ap.add_argument("--http-origin", action="append", default=[], help="extra browser Origin to allow (repeatable)")
     a = ap.parse_args(argv)
     if a.demo == bool(a.upstream):
         ap.error("choose exactly one of --demo or --upstream")
+    if a.http_port is not None and a.http_host not in ("127.0.0.1", "localhost", "::1") and not a.http_token:
+        ap.error("--http-host other than loopback needs --http-token")
     try:
         cfg = load_config(a.config) if a.config else Config()
     except ConfigError as exc:
@@ -335,8 +430,18 @@ def main(argv: list[str] | None = None) -> None:
               f"({'token required' if a.admin_token else 'NO TOKEN: local use only'})", file=sys.stderr)
     else:
         session = InProcessSession(gw.open_session("mcp", a.agent_id, compile_scope(a.task, grants)))
+    mcp = McpGateway(session, exposed)
+    if a.http_port is not None:
+        httpd = make_http_server(mcp, a.http_host, a.http_port, a.http_token, tuple(a.http_origin))
+        print(f"intentguard MCP gateway ready on http://{a.http_host}:{httpd.server_address[1]}/mcp "
+              f"({'token required' if a.http_token else 'NO TOKEN: local use only'})", file=sys.stderr)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        return
     print("intentguard MCP gateway ready", file=sys.stderr)
-    McpGateway(session, exposed).serve()
+    mcp.serve()
 
 
 if __name__ == "__main__":
