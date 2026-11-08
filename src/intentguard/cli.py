@@ -7,6 +7,7 @@
                                           run the service in front of an existing MCP server
     intentguard mcp ...                   run the MCP gateway (same options as `python -m intentguard.mcp_gateway`)
     intentguard verify-audit FILE         check a persisted audit log's hash chain
+    intentguard report FILE [--session ID]  readable summary of an audit log, per session
 """
 
 from __future__ import annotations
@@ -64,6 +65,16 @@ def cmd_verify_audit(a: argparse.Namespace) -> int:
         return 0
     print(f"TAMPERED: the chain breaks at entry {bad} of {len(log.entries)}", file=sys.stderr)
     return 1
+
+
+def cmd_report(a: argparse.Namespace) -> int:
+    from .report import build_report
+    if not Path(a.path).exists():
+        print(f"error: no such file: {a.path}", file=sys.stderr)
+        return 2
+    log = AuditLog(a.path)
+    print(build_report(log, a.session), end="")
+    return 0 if log.verify()[0] else 1
 
 
 def build_service(a: argparse.Namespace):
@@ -132,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("verify-audit", help="check an audit log's hash chain")
     p.add_argument("path")
     p.set_defaults(fn=cmd_verify_audit)
+    p = sub.add_parser("report", help="readable summary of an audit log, per session")
+    p.add_argument("path")
+    p.add_argument("--session", help="only this session")
+    p.set_defaults(fn=cmd_report)
     p = sub.add_parser("serve", help="run the HTTP service")
     p.add_argument("--demo", action="store_true", help="serve the mock tools (synthetic data)")
     p.add_argument("--upstream", help="command that starts the MCP server to put the service in front of")

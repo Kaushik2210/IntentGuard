@@ -3,6 +3,7 @@ from .engine import EngineConfig, PolicyEngine
 from .gateway import Gateway, GatewayClient
 from .models import Classification, Op, Trust, Verdict
 from .scope import compile_scope
+from .sdk import Guard
 
 __all__ = [
            "AuditLog",
@@ -10,6 +11,7 @@ __all__ = [
            "EngineConfig",
            "Gateway",
            "GatewayClient",
+           "Guard",
            "Op",
            "PolicyEngine",
            "Trust",

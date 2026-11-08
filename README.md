@@ -23,6 +23,7 @@ intentguard serve --demo         # HTTP service + dashboard backend, mock tools,
 intentguard serve --demo --db sessions.db   # same, but sessions survive a restart
 intentguard mcp --demo --task "Read research/paper.pdf and summarize it." --grants '{"resources":["research/*"]}'   # MCP gateway
 intentguard verify-audit audit.jsonl                                       # is the hash chain intact?
+intentguard report audit.jsonl                                             # readable summary per session
 ```
 
 One TOML file configures everything: the engine (quarantine level, the risk ladder that switches network, shell and
@@ -60,7 +61,30 @@ an author, and several weaknesses are documented there (F2, F5 to F26). `python 
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
-`python -m pytest -q` (121 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+`python -m pytest -q` (129 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+
+## Guard your own Python functions
+
+No framework needed: decorate the functions the agent may use, open a session for the user's task, and give the agent only
+the session. `examples/guard_your_own_tools.py` runs end to end.
+
+```python
+from intentguard.sdk import Guard
+
+guard = Guard(classes={"hr/salary.csv": "CONFIDENTIAL"}, trust={"bob@x.org": "approved"})
+
+@guard.tool("read", resource_arg="path")
+def read_file(path): ...
+
+@guard.tool("send", resource_arg="attachment", dest_arg="to", resource_optional=True)
+def send_email(to, body, attachment=None): ...
+
+session = guard.session("Read notes/a.txt and email bob@x.org a summary",
+                        grants={"resources": ["notes/*"], "destinations": ["bob@x.org"]})
+session.call("send_email", to="evil@x.org", body="...")   # BLOCK, with the reason; the function never runs
+```
+
+Pass `db="sessions.db"` to keep sessions across restarts. `guard.gateway` exposes approvals, `release` and `close`.
 
 ## Use it with an agent framework (LangChain / LangGraph)
 
