@@ -26,8 +26,7 @@ from intentguard.mock_env import FILES, MockEnv  # noqa: E402
 
 REPO = "https://github.com/Kaushik2210/IntentGuard"
 SNAPSHOT = ROOT / "site" / "results_snapshot.json"
-TEMPLATE = ROOT / "site" / "template.html"
-OUT = ROOT / "docs" / "index.html"
+OUT = ROOT / "web" / "src" / "data" / "site-data.json"
 
 RESEARCH = {"resources": ["research/*"], "project_root": "research/", "max_classification": "INTERNAL",
             "destinations": [ADV]}
@@ -125,33 +124,42 @@ def pct(s: str) -> float:
     return float(m.group(1)) if m else 0.0
 
 
+def audit_chain() -> list[dict]:
+    """The real hash-chained audit log the engine writes for the injection scenario (entries as stored)."""
+    sc = next(s for s in SCENARIOS if s["id"] == "injection")
+    env = MockEnv()
+    gw = Gateway(env.tools(), env.catalog())
+    client = gw.open_session("site-chain", "demo-agent", compile_scope(sc["task"], sc["grants"]))
+    for tool, args in sc["steps"]:
+        client.call(tool, **args)
+    ok, _ = gw.audit.verify()
+    assert ok
+    return [dict(e) for e in gw.audit.entries]
+
+
 def make_data() -> dict:
     cfg = EngineConfig()
     results = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     return {"repo": REPO, "scenarios": [run_scenario(s) for s in SCENARIOS],
             "ladder": [{"at": t, "off": c} for t, c in cfg.ladder] + [{"at": cfg.quarantine_at, "off": "quarantine"}],
             "labels": LABELS, "sets": [{"id": k, "label": v} for k, v in SETS], "results": results,
-            "files": sorted(FILES)}
+            "rules": RULE_TEXT, "chain": audit_chain(), "vault": {"path": "hr/salary.xlsx", "text": FILES["hr/salary.xlsx"][0]}}
 
 
-def build() -> str:
+def write_json() -> Path:
     data = make_data()
-    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
-                            text=True).stdout.strip() or "uncommitted"
-    blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    html = TEMPLATE.read_text(encoding="utf-8")
-    return (html.replace("__DATA__", blob).replace("__BUILD__", commit)
-            .replace("__RESULTS_COMMIT__", data["results"]["commit"]))
+    data["build"] = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
+                                   text=True).stdout.strip() or "uncommitted"
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    return OUT
 
 
 def main() -> None:
     if "--refresh" in sys.argv:
         SNAPSHOT.write_text(json.dumps(parse_results(), indent=1), encoding="utf-8")
         print(f"refreshed {SNAPSHOT.name}")
-    OUT.parent.mkdir(exist_ok=True)
-    OUT.write_text(build(), encoding="utf-8")
-    (OUT.parent / ".nojekyll").touch()
-    print(f"wrote {OUT} ({OUT.stat().st_size // 1024} KB)")
+    print(f"wrote {write_json().relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

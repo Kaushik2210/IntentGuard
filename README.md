@@ -61,14 +61,24 @@ an author, and several weaknesses are documented there (F2, F5 to F26). `python 
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
-`python -m pytest -q` (166 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+`python -m pytest -q` (171 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
 
-## Showcase page
+## Showcase site
 
-`docs/index.html` is a single self-contained page (no external files) with a replay of real engine decisions, the benchmark
-table with its caveats, and the known limits. It is generated, not hand-written: `python site/build_site.py` runs the engine on
-the demo scenarios (`--refresh` first re-reads `results/results.md` after `python -m bench.run`), and a test fails if the
-committed page no longer matches the engine. To publish it, set GitHub Pages to deploy from branch `master`, folder `/docs`.
+`web/` is a Next.js (App Router, static export) site that shows the prototype: a 3D steel-and-glass gate (three.js) that real engine
+decisions fly through, a replay console that lights up which of the six checks fired, a compose box to try to smuggle a secret past the
+lineage check (a tested TypeScript port of that one rule), a risk gauge with the capabilities that switch off, an audit ledger you can
+tamper with (SHA-256 in the browser), the benchmark table with its caveats, and the known limits. It follows light and dark and respects
+`prefers-reduced-motion`.
+
+```bash
+python site/build_site.py          # run the real engine, write web/src/data/site-data.json (--refresh re-reads results/results.md)
+cd web && npm install && npm run dev      # http://localhost:3100
+cd web && npm run publish:docs            # build and copy the static site into docs/
+```
+
+Everything the site shows comes from that JSON, and a test fails if it no longer matches the engine. To publish, set GitHub Pages to deploy
+from branch `master`, folder `/docs`; the export assumes the URL path `/IntentGuard/` (set `NEXT_BASE_PATH=""` for a custom domain).
 
 ## Guard your own Python functions
 
