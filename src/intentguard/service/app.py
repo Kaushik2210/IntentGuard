@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from ..audit import AuditLog
 from ..engine import PolicyEngine
-from ..gateway import Gateway
+from ..gateway import Gateway, GatewayClient
 from ..mock_env import MockEnv
 from ..models import Decision
 from ..scope import compile_scope
@@ -142,7 +142,9 @@ def create_app(gateway: Gateway, agent_token: str | None = None,
     @app.post("/sessions/{sid}/call", dependencies=[agent])
     def call(sid: str, body: ToolCall):
         if sid not in clients:
-            raise HTTPException(404, "no such session")
+            if sid not in gateway.sessions:
+                raise HTTPException(404, "no such session")
+            clients[sid] = GatewayClient(gateway, sid)  # a session restored from the store after a restart
         res = do_call(sid, body.tool, body.args)
         return jsonable_encoder({"decision": res.decision, "output": res.output, "error": res.error})
 

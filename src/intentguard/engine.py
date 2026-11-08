@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import codecs
 import fnmatch
+import hashlib
 import re
 import time
 import urllib.parse
@@ -124,15 +125,21 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def _grams(text: str, k: int) -> frozenset[str]:
+def _fp(gram: str) -> int:
+    """64-bit fingerprint of a run of characters. Only fingerprints are kept, so the session's memory of
+    sensitive data holds no readable fragments of it (and is safe to write to disk)."""
+    return int.from_bytes(hashlib.blake2b(gram.encode(), digest_size=8).digest(), "big")
+
+
+def _grams(text: str, k: int) -> frozenset[int]:
     t = _norm(text)[:20000]
-    return frozenset(t[i:i + k] for i in range(len(t) - k + 1))
+    return frozenset(_fp(t[i:i + k]) for i in range(len(t) - k + 1))
 
 
-def _overlaps(views: list[str], grams: frozenset[str], k: int) -> bool:
+def _overlaps(views: list[str], grams: frozenset[int], k: int) -> bool:
     for v in views:
         n = _norm(v)
-        if any(n[i:i + k] in grams for i in range(len(n) - k + 1)):
+        if any(_fp(n[i:i + k]) in grams for i in range(len(n) - k + 1)):
             return True
     return False
 

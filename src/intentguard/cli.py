@@ -87,6 +87,12 @@ def build_service(a: argparse.Namespace):
             raise ValueError("--upstream needs --config with at least one [tools.<name>] section")
         gw, _ = build_proxy(StdioUpstream(split_command(a.upstream)), cfg.proxy_dict(), engine)
         gw.audit = audit
+    db = getattr(a, "db", None) or os.environ.get("INTENTGUARD_DB")
+    if db:
+        from .store import SessionStore
+        n = gw.attach_store(SessionStore(db))
+        if n:
+            print(f"restored {n} session(s) from {db}", file=sys.stderr)
     app = create_app(gw, agent_token, admin_token, cfg.grants or None)
     if a.demo:
         add_demo_seed(app, admin_token)
@@ -133,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--audit-file")
+    p.add_argument("--db", help="SQLite file that keeps sessions across restarts (or INTENTGUARD_DB)")
     p.add_argument("--agent-token")
     p.add_argument("--admin-token")
     p.set_defaults(fn=cmd_serve)

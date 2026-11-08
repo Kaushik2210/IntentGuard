@@ -76,6 +76,19 @@ class Gateway:
         self.pending: dict[str, tuple[Session, Tool, dict, Classification, ActionRequest, Decision]] = {}
         self.memory: dict[str, dict] = {}  # per-agent risk and tags carried across sessions
         self.resolved: dict[str, tuple[str, Any]] = {}  # action id -> ("approved", output) | ("rejected", None) | ("error", msg)
+        self.store: Any = None  # optional SessionStore: sessions survive a restart
+
+    def attach_store(self, store: Any) -> int:
+        """Load saved sessions from `store` and save every change from now on. Returns how many were restored."""
+        self.store = store
+        sessions, memory = store.load()
+        self.sessions.update(sessions)
+        self.memory.update(memory)
+        return len(sessions)
+
+    def _persist(self, session_id: str) -> None:
+        if self.store is not None and session_id in self.sessions:
+            self.store.save(self.sessions[session_id])
 
     def open_session(self, session_id: str, agent_id: str, scope: TaskScope) -> GatewayClient:
         s = Session(session_id, agent_id, scope)
@@ -83,11 +96,18 @@ class Gateway:
         if carry and agent_id in self.memory:
             carry(s, self.memory[agent_id])
         self.sessions[session_id] = s
+        self._persist(session_id)
         self.audit.append({"event": "session_open", "session": session_id, "agent": agent_id,
                            "task": scope.task_text})
         return GatewayClient(self, session_id)
 
     def call(self, session_id: str, tool_name: str, **args) -> Result:
+        try:
+            return self._call(session_id, tool_name, **args)
+        finally:
+            self._persist(session_id)
+
+    def _call(self, session_id: str, tool_name: str, **args) -> Result:
         s = self.sessions[session_id]
         tool = self.__tools.get(tool_name)
         if s.closed:  # an administrator ended this session
@@ -171,6 +191,8 @@ class Gateway:
         except Exception as exc:  # the approved tool itself failed; the waiting caller must hear about it
             self.resolved[action_id] = ("error", str(exc))
             raise
+        finally:
+            self._persist(s.session_id)
         self.resolved[action_id] = ("approved", out)
         return out
 
@@ -184,6 +206,9 @@ class Gateway:
         s.risk, s.denied, s.quarantined, s.tags = 0.0, 0, False, []
         s.caps = type(s.caps)()
         self.memory.pop(s.agent_id, None)
+        if self.store is not None:
+            self.store.delete_memory(s.agent_id)
+        self._persist(session_id)
         self.audit.append({"event": "released", "session": session_id, "by": approver, "reason": reason,
                            "before": before})
         return before
@@ -191,6 +216,7 @@ class Gateway:
     def close(self, session_id: str, approver: str, reason: str = "") -> None:
         """A human ends a session; every further call in it is blocked and audited."""
         self.sessions[session_id].closed = True
+        self._persist(session_id)
         self.audit.append({"event": "closed", "session": session_id, "by": approver, "reason": reason})
 
     def reject(self, action_id: str, approver: str) -> None:
@@ -212,6 +238,8 @@ class Gateway:
     def _log(self, req: ActionRequest, d: Decision) -> None:
         sess = self.sessions[req.session_id]
         self.memory[req.agent_id] = {"risk": sess.risk, "tags": set(sess.tags)}
+        if self.store is not None:
+            self.store.save_memory(req.agent_id, self.memory[req.agent_id])
         self.audit.append({
             "event": "action", "action": req.action_id, "session": req.session_id,
             "agent": req.agent_id, "tool": req.tool, "op": req.op.value, "resource": req.resource,

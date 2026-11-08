@@ -99,3 +99,13 @@ def test_serve_needs_exactly_one_backend():
         main(["serve"])
     with pytest.raises(ValueError, match="at least one"):
         build_service(ns(upstream=f"{sys.executable} {FAKE}"))
+
+
+def test_serve_db_restores_sessions_after_a_restart(tmp_path):
+    a = argparse.Namespace(demo=True, upstream=None, config=None, host="127.0.0.1", port=8000,
+                           audit_file=None, agent_token=None, admin_token=None, db=str(tmp_path / "s.db"))
+    body = {"session_id": "s", "agent_id": "agent", "task": "Read research/paper.pdf.",
+            "grants": {"resources": ["research/*"]}}
+    assert TestClient(build_service(a)).post("/sessions", json=body).status_code == 200
+    again = TestClient(build_service(a))  # a second service on the same file = a restart
+    assert [r["session_id"] for r in again.get("/sessions").json()] == ["s"]

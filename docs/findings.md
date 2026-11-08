@@ -692,3 +692,18 @@ What this does and does not show:
 - Same limits as everywhere: sets written by the system's author, scripted agents, synthetic data, no human approvals.
 - For the paper: say "stand-ins for the idea of Progent and The Task Shield", never "Progent" or "The Task Shield", until a
   run against their released code exists.
+
+## F28. Sessions survive a restart (SQLite), and lineage now stores fingerprints only
+
+Product change, not a new result. `intentguard serve --db FILE` keeps each session's scope, risk, restrictions, closed flag,
+approvals and content-lineage in SQLite and restores them on start, so a restart no longer clears a lock-out or forgets that a
+session read confidential data.
+
+- To make the file safe to keep, the lineage memory was changed from readable 12-character fragments to 64-bit hashes of them
+  (`engine._fp`). Matching is the same, so the benchmark is unchanged: held-out generated attack success 2.3%, red-team 3
+  held-out 30.8%, as before. A test checks the database file contains none of the file's text.
+- Not persisted, on purpose: actions waiting for a human (they hold live tool handles; the audit log still has them), and the
+  buffer of recent outbound text used to catch a secret split across sends (it can hold the secret itself). After a restart
+  that buffer starts empty, so a split-send that straddles the restart is not caught by the buffer. This is a known gap.
+- The dashboard's event list is in memory and starts empty after a restart; the audit log is the record.
+- A 64-bit hash can in theory collide and cause a false match; at the sizes used here the chance is negligible but it is not zero.
