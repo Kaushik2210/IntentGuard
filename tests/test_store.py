@@ -94,3 +94,66 @@ def test_service_keeps_serving_a_session_after_a_restart(tmp_path):
     r = http2.post("/sessions/s/call", json={"tool": "read_file", "args": {"path": "research/paper.pdf"}})
     assert r.status_code == 200 and r.json()["decision"]["decision"] == "ALLOW"
     assert any(row["session_id"] == "s" for row in http2.get("/sessions").json())
+
+
+def _read_budget(db):
+    gw, _ = make(db)
+    c = gw.open_session("s1", "agent", compile_scope("Read finance/budget.xlsx.", GRANTS))
+    c.call("read_file", path="finance/budget.xlsx")
+    gw.store.close()
+
+
+def test_a_number_cannot_be_recovered_by_hashing_candidates(tmp_path):
+    import struct
+
+    from intentguard.engine import _fp
+    db = tmp_path / "s.db"
+    _read_budget(db)
+    raw = db.read_bytes()
+    assert struct.pack(">Q", _fp("#410000")) not in raw  # the unkeyed hash of the number is not in the file
+    assert (tmp_path / "s.db.key").exists()
+
+
+def test_each_database_gets_its_own_key(tmp_path):
+    _read_budget(tmp_path / "a.db")
+    _read_budget(tmp_path / "b.db")
+    assert (tmp_path / "a.db.key").read_text() != (tmp_path / "b.db.key").read_text()
+
+
+def test_losing_the_key_fails_loudly_instead_of_forgetting_lineage(tmp_path):
+    from intentguard.store import StoreKeyError
+    db = tmp_path / "s.db"
+    _read_budget(db)
+    (tmp_path / "s.db.key").unlink()
+    with pytest.raises(StoreKeyError):
+        SessionStore(db)
+
+
+def test_a_key_from_the_environment_is_used_and_checked(tmp_path, monkeypatch):
+    from intentguard.store import StoreKeyError
+    monkeypatch.setenv("INTENTGUARD_DB_KEY", "ab" * 32)
+    store = SessionStore(tmp_path / "s.db")
+    assert store.key == bytes.fromhex("ab" * 32) and not (tmp_path / "s.db.key").exists()
+    store.close()
+    monkeypatch.setenv("INTENTGUARD_DB_KEY", "zz")
+    with pytest.raises(StoreKeyError):
+        SessionStore(tmp_path / "t.db")
+    monkeypatch.setenv("INTENTGUARD_DB_KEY", "ab")
+    with pytest.raises(StoreKeyError):
+        SessionStore(tmp_path / "t.db")
+
+
+def test_hashes_made_with_another_key_never_match():
+    from intentguard import PolicyEngine
+    from intentguard.models import Classification, Session
+    e1, e2 = PolicyEngine(), PolicyEngine()
+    e1.set_fingerprint_key(b"k" * 32)
+    e2.set_fingerprint_key(b"j" * 32)
+    from intentguard.models import TaskScope
+    s = Session("s", "a", TaskScope("t", set(), []))
+    e1.remember(s, "alice earns 120000 per year in the lab", Classification.CONFIDENTIAL)
+    mine = s.lineage[0][1]
+    s2 = Session("s2", "a", TaskScope("t", set(), []))
+    e2.remember(s2, "alice earns 120000 per year in the lab", Classification.CONFIDENTIAL)
+    assert mine.isdisjoint(s2.lineage[0][1])
+

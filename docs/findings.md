@@ -738,11 +738,28 @@ Known costs and gaps:
 - A legitimate email that repeats a sensitive number (for example quoting a salary) now goes to a human for CONFIDENTIAL data and
   is blocked for SECRET data. That is intended, but it is a new source of review requests; the benchmark's benign episodes do not
   contain such a case, so the rate is unmeasured.
-- Hashes of numbers are NOT safe to publish like the text hashes in F28: a 5 to 9 digit number can be recovered from its 64-bit
-  hash by trying every value. The database file (`--db`) therefore reveals which large numbers a sensitive file contained to
-  anyone who can read it. Protect it like the audit log. A keyed hash would fix this and has not been done.
+- Hashes of numbers were NOT safe to store like the text hashes in F28: a 5 to 9 digit number can be recovered from its 64-bit
+  hash by trying every value. Fixed in F30 with a keyed hash.
 - p95 latency on rt4_variants rose to about 7 ms (it was about 0.3 ms): each outbound text now has up to five readings per
   decoding. Still small beside a model call, but measured on a few episodes only.
 - The number words handled are English only, and a value reworded without a number (a comparison, a rank, a description) is
   not detected at all. Paraphrase in general remains open.
+
+## F30. Lineage hashes are now keyed, so a saved database no longer reveals short values
+
+Product change that fixes a gap F29 admitted. The hashes in the `--db` file were plain 64-bit hashes, so a number of 5 to 9
+digits (a salary, an account number) could be recovered by hashing every candidate. They are now BLAKE2b hashes keyed with a
+random 32-byte secret kept in a separate file, `<db>.key` (created on first use), or supplied as hex in `INTENTGUARD_DB_KEY`.
+
+- Matching and benchmark numbers are unchanged: the benchmark runs without a store and so without a key, and the key only changes
+  which 64-bit values are stored, not which texts match. A test shows hashes made with different keys never overlap.
+- A test checks that the unkeyed hash of a known number is absent from the database file, and that each database gets its own key.
+- If the database holds lineage but the key is missing, opening it raises an error instead of continuing with an empty memory.
+  That fails closed, but it also means a database saved by the earlier version (unkeyed) has to be deleted to be used again.
+- What this does not do: whoever holds the database AND the key file can still brute-force short values, so keep the key file
+  apart from the database and its backups. It also does not hide file names or task text, which the database stores in the
+  clear (protect it like the audit log). Candidate guessing against a 64-bit hash with a guessable value space is the threat
+  this addresses; it is not a claim of encryption.
+- Related fix found while testing: the MCP HTTP transport now reads the request body before refusing a request, because on
+  Windows a client could see a connection reset instead of the 401 or 403.
 

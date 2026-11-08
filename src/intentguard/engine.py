@@ -77,6 +77,7 @@ class EngineConfig:
     mention_check: bool = True  # CONFIDENTIAL+ reads must be referenced by the task text
     lineage: bool = True  # outbound content that contains sensitive data read in this session
     lineage_k: int = 12  # shortest run of letters/digits that counts as a match
+    fingerprint_key: bytes = b""  # secret that keys the lineage hashes; set by the session store (see store.py)
     lineage_variants: bool = True  # also match sensitive numbers (digits, 120k, in words) and leetspeak
     approval_memory: bool = True  # a human approval of one recipient or file is remembered for the session
     action_risk_cap: float | None = None  # most risk one action can add; None = the sum of every rule it trips
@@ -126,15 +127,16 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def _fp(gram: str) -> int:
+def _fp(gram: str, key: bytes = b"") -> int:
     """64-bit fingerprint of a run of characters. Only fingerprints are kept, so the session's memory of
-    sensitive data holds no readable fragments of it (and is safe to write to disk)."""
-    return int.from_bytes(hashlib.blake2b(gram.encode(), digest_size=8).digest(), "big")
+    sensitive data holds no readable fragments of it. With a secret `key` (the session store makes one) the hash
+    cannot be reversed by guessing candidate values, which matters for short inputs such as numbers."""
+    return int.from_bytes(hashlib.blake2b(gram.encode(), digest_size=8, key=key).digest(), "big")
 
 
-def _grams(text: str, k: int) -> frozenset[int]:
+def _grams(text: str, k: int, key: bytes = b"") -> frozenset[int]:
     t = _norm(text)[:20000]
-    return frozenset(_fp(t[i:i + k]) for i in range(len(t) - k + 1))
+    return frozenset(_fp(t[i:i + k], key) for i in range(len(t) - k + 1))
 
 
 _UNITS = {w: i for i, w in enumerate(
@@ -193,12 +195,12 @@ def _leet(text: str) -> list[str]:
     return [base.replace("1", one).replace("0", zero) for one in ("i", "l", "1") for zero in ("o", "0")]
 
 
-def _overlaps(views: list[str], grams: frozenset[int], k: int, numbers: bool = False) -> bool:
+def _overlaps(views: list[str], grams: frozenset[int], k: int, numbers: bool = False, key: bytes = b"") -> bool:
     for v in views:
         n = _norm(v)
-        if any(_fp(n[i:i + k]) in grams for i in range(len(n) - k + 1)):
+        if any(_fp(n[i:i + k], key) in grams for i in range(len(n) - k + 1)):
             return True
-        if numbers and any(_fp(f"#{x}") in grams for x in _numbers(v)):
+        if numbers and any(_fp(f"#{x}", key) in grams for x in _numbers(v)):
             return True
     return False
 
@@ -206,6 +208,10 @@ def _overlaps(views: list[str], grams: frozenset[int], k: int, numbers: bool = F
 class PolicyEngine:
     def __init__(self, config: EngineConfig | None = None):
         self.cfg = config or EngineConfig()
+
+    def set_fingerprint_key(self, key: bytes) -> None:
+        """Key the lineage hashes. Call before any session reads sensitive data: hashes made with another key never match."""
+        self.cfg = replace(self.cfg, fingerprint_key=key)
 
     # ---- helpers -------------------------------------------------------------
     @staticmethod
@@ -239,9 +245,10 @@ class PolicyEngine:
     def remember(self, s: Session, output: object, cls: Classification) -> None:
         """Keep a fingerprint of sensitive data the session has read, to recognise it on the way out."""
         if self.cfg.lineage:
-            grams = _grams(str(output), self.cfg.lineage_k)
+            key = self.cfg.fingerprint_key
+            grams = _grams(str(output), self.cfg.lineage_k, key)
             if self.cfg.lineage_variants:  # "#" never survives _norm, so these cannot collide with text grams
-                grams |= {_fp(f"#{n}") for n in _numbers(str(output))}
+                grams |= {_fp(f"#{n}", key) for n in _numbers(str(output))}
             if grams:
                 s.lineage.append((cls, grams))
 
@@ -325,7 +332,7 @@ class PolicyEngine:
                 views = _decodings(text) + _decodings(s.outbound)
                 if cfg.lineage_variants:
                     views += [r for v in views for r in _leet(v)]
-                hit = [c for c, g in s.lineage if _overlaps(views, g, cfg.lineage_k, cfg.lineage_variants)]
+                hit = [c for c, g in s.lineage if _overlaps(views, g, cfg.lineage_k, cfg.lineage_variants, cfg.fingerprint_key)]
                 if hit:  # credentials are blocked; other confidential data goes to a human
                     top = max(hit)
                     fire("TAINT-002", Verdict.BLOCK if top >= Classification.SECRET else Verdict.REVIEW, 0.3,

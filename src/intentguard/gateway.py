@@ -81,6 +81,9 @@ class Gateway:
     def attach_store(self, store: Any) -> int:
         """Load saved sessions from `store` and save every change from now on. Returns how many were restored."""
         self.store = store
+        key, set_key = getattr(store, "key", b""), getattr(self.engine, "set_fingerprint_key", None)
+        if key and set_key:  # before load: restored lineage was hashed with this key
+            set_key(key)
         sessions, memory = store.load()
         self.sessions.update(sessions)
         self.memory.update(memory)

@@ -5,13 +5,19 @@ between sessions, and the content-lineage fingerprints (64-bit hashes, never rea
 waiting for a human (they are tools bound to live callables; the audit log still records them) and the short buffer of
 recent outbound text used to spot a secret split across several sends. After a restart that buffer starts empty.
 
-The file holds task text and file names, so protect it like the audit log. Large numbers from sensitive content are kept
-as plain hashes too, and a number of a few digits can be recovered from its hash by trying every value (see F29).
+The file holds task text and file names, so protect it like the audit log.
+
+The lineage hashes are keyed with a secret that lives in a separate file (`<db>.key`, created on first use, or the hex
+in INTENTGUARD_DB_KEY), so someone who gets only the database cannot recover a short value such as a salary by
+hashing every candidate. Keep the key file apart from the database and from backups of it. If the database holds
+lineage but the key is gone, opening it fails rather than quietly forgetting what sessions read.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import sqlite3
 import struct
 import threading
@@ -59,12 +65,47 @@ def _session_from_dict(sid: str, d: dict) -> Session:
     return s
 
 
+class StoreKeyError(ValueError):
+    """The database holds lineage hashes but the key that made them is missing or wrong."""
+
+
+def _load_key(path: Path, db_has_lineage: bool) -> bytes:
+    env = os.environ.get("INTENTGUARD_DB_KEY")
+    if env:
+        try:
+            key = bytes.fromhex(env)
+        except ValueError:
+            raise StoreKeyError("INTENTGUARD_DB_KEY must be hex") from None
+        if not 16 <= len(key) <= 64:
+            raise StoreKeyError("INTENTGUARD_DB_KEY must be 16 to 64 bytes (32 to 128 hex characters)")
+        return key
+    keyfile = path.with_name(path.name + ".key")
+    if keyfile.exists():
+        return bytes.fromhex(keyfile.read_text().strip())
+    if db_has_lineage:
+        raise StoreKeyError(f"{path} holds saved lineage but its key file {keyfile} is missing. Restore the key, or "
+                            "delete the database to start clean (sessions and lineage in it are lost).")
+    key = secrets.token_bytes(32)
+    keyfile.write_text(key.hex())
+    try:
+        keyfile.chmod(0o600)  # best effort; Windows ignores most of this
+    except OSError:
+        pass
+    return key
+
+
 class SessionStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self._lock = threading.Lock()  # the HTTP service calls from several threads
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
+        has = self._db.execute("SELECT 1 FROM lineage LIMIT 1").fetchone() is not None
+        try:
+            self.key = _load_key(self.path, has)
+        except StoreKeyError:
+            self._db.close()
+            raise
         self._saved_lineage: dict[str, int] = {}
 
     def save(self, s: Session) -> None:

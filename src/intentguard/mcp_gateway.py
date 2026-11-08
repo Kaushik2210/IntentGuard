@@ -202,18 +202,19 @@ def make_http_server(gateway: McpGateway, host: str = "127.0.0.1", port: int = 0
         do_DELETE = do_GET
 
         def do_POST(self) -> None:
-            if self._refuse():
-                return
-            if self.path.split("?")[0] != "/mcp":
-                return self._send(404, McpGateway._err(None, -32600, "the MCP endpoint is /mcp"))
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 return self._send(411, McpGateway._err(None, -32600, "Content-Length required"))
             if not 0 <= length <= MAX_BODY:
                 return self._send(413, McpGateway._err(None, -32600, "request body too large"))
+            raw = self.rfile.read(length)  # read before any refusal, or the client may see a reset instead of the status
+            if self._refuse():
+                return
+            if self.path.split("?")[0] != "/mcp":
+                return self._send(404, McpGateway._err(None, -32600, "the MCP endpoint is /mcp"))
             try:
-                msg = json.loads(self.rfile.read(length))
+                msg = json.loads(raw)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 return self._send(400, McpGateway._err(None, -32700, "parse error"))
             batch = msg if isinstance(msg, list) else [msg]
