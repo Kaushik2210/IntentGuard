@@ -40,14 +40,14 @@ service with agent/admin bearer tokens, Next.js dashboard with session admin (re
 command, HTTP-only agent process, structured errors when a tool fails after being allowed, a LangChain/LangGraph
 adapter, an MCP gateway (demo and proxy modes, with an approval channel that waits for a human in the
 dashboard), IntentGuardBench (hand-written, seeded-generated, adversarial and red-team sets with dev and
-held-out halves, ablations, baselines incl. LlamaFirewall local scanners and Llama Prompt Guard 2), and
+held-out halves, ablations, baselines incl. LlamaFirewall local scanners, Llama Prompt Guard 2, and deterministic stand-ins for the ideas behind Progent and The Task Shield, see F27), and
 harnesses that run real local Ollama models as agents, directly and through the MCP gateway.
 
 Experiments that are built but off by default because they did not pay for themselves: a per-action risk cap
 and a reviewed lock-out (see F25 and F26).
 
 Not done: an independent (non-author) episode set, LlamaFirewall AlignmentCheck (needs an external LLM),
-comparison runs of Progent or CaMeL, verified network-level isolation (Docker draft untested), OPA backend,
+comparison runs of the real Progent, The Task Shield or CaMeL (only stand-ins for the first two, F27), verified network-level isolation (Docker draft untested), OPA backend,
 Postgres/Redis, MCP resources/prompts/HTTP transport. Known open weaknesses: paraphrased or substituted
 exfiltration, split secrets whose first piece is short, review friction on legitimate tasks, and a session that
 is locked out after one blocked attempt (F16 to F18, F24 to F26).
@@ -57,7 +57,7 @@ an author, and several weaknesses are documented there (F2, F5 to F26). `python 
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
-`python -m pytest -q` (111 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+`python -m pytest -q` (113 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
 
 ## Use it with an agent framework (LangChain / LangGraph)
 

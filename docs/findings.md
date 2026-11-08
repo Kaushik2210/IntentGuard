@@ -657,3 +657,38 @@ Reading:
   unit test shows it, but this evidence does not show that relaxing it improves completion.
 - Lesson: I drew the F24 diagnosis from a few printed runs and did not tabulate every batch by outcome until now. Count
   first, then explain.
+
+## F27. Stand-ins for the ideas behind Progent and The Task Shield (head-to-head attempt, not the real systems)
+
+Two deterministic baselines were added to `bench/baselines.py` so the paper has something to put beside the closest prior work.
+They are NOT those systems. `privilege_rules_standin` captures the idea behind Progent: privilege rules over operations and
+arguments, derived once from the task and its grants (no LLM-written policy, no solver, no human approval, no session state,
+no data sensitivity). `task_alignment_standin` captures the idea behind The Task Shield: a call is allowed only if its
+operation is implied by the task and every file or destination it touches is named in the task text (a language model does
+this judgement in the real system). Neither was run against the authors' code.
+
+Attack success (ASR) / legitimate steps blocked (FPR) / benign task completion, scripted episodes:
+
+| Set | static RBAC | privilege rules | task alignment | IntentGuard |
+|---|---|---|---|---|
+| core | 60.0 / 5.6 / 83.3% | 20.0 / 1.4 / 95.8% | 0.0 / 57.7 / 37.5% | 0.0 / 0.0 / 91.7% |
+| generated, held-out (300) | 75.5 / 8.4 / 76.9% | 54.1 / 1.8 / 95.0% | 16.4 / 32.4 / 54.4% | 2.3 / 0.0 / 87.5% |
+| generated, fresh (300) | 70.7 / 5.6 / 83.2% | 44.9 / 2.3 / 93.2% | 13.1 / 36.6 / 57.8% | 1.0 / 0.0 / 87.6% |
+| seq (multi-step) | 83.3 / 0.0 / 100% | 83.3 / 0.0 / 100% | 0.0 / 60.9 / 0.0% | 0.0 / 8.7 / 25.0% |
+| red-team 2, held-out | 100 / 0.0 / 100% | 94.1 / 0.0 / 100% | 29.4 / 35.7 / 50.0% | 5.9 / 0.0 / 100% |
+| red-team 3, held-out | 100 / 0.0 / 100% | 100 / 0.0 / 100% | 0.0 / 18.8 / 0.0% | 30.8 / 0.0 / 100% |
+
+What this does and does not show:
+- Task-scoped privilege rules alone cut attack success from static RBAC's 71% to 76% to 45% to 54% on the generated sets, and
+  on multi-step (seq) and red-team 3 sets they did nothing, because each step is individually within the grants. This is
+  consistent with the point that per-call checks miss chains of permitted steps, but it is a point about this stand-in.
+- The task-alignment stand-in gets low attack success mostly by blocking legitimate work: 32% to 37% of legitimate steps on
+  the generated sets and 0% completion on seq and red-team 3. It is a strict reading (generated tasks often do not name every
+  file the agent needs). A language-model judge, as in the real Task Shield, would probably be less strict, so these rows
+  are an upper bound on its cost, not a measurement of it.
+- On red-team 3 held-out the task-alignment stand-in has 0% attack success and IntentGuard has 30.8%. That set is the one
+  where IntentGuard is weakest (paraphrase and similar), and the stand-in only wins by also blocking every benign episode
+  (0% completion). Report it; do not hide it.
+- Same limits as everywhere: sets written by the system's author, scripted agents, synthetic data, no human approvals.
+- For the paper: say "stand-ins for the idea of Progent and The Task Shield", never "Progent" or "The Task Shield", until a
+  run against their released code exists.

@@ -47,6 +47,56 @@ class KeywordGuardrailEngine:
                         "block" if hit else "allow", replace(s.caps))
 
 
+class PrivilegeRulesEngine:
+    """Stand-in for the IDEA behind Progent (Shi et al., 2025): least-privilege rules over tool
+    operations and arguments, derived once from the task and its grants and checked deterministically.
+
+    NOT Progent: no LLM writes or updates the policy, there is no solver, and it was not run against the
+    authors' code. It allows a call only if its operation is one the task implies, its file argument
+    matches a granted path pattern, and its destination matches a granted destination. It keeps no
+    session state, ignores data sensitivity and content, and never asks a human (allow or block only).
+    """
+
+    def evaluate(self, req: ActionRequest, s: Session) -> Decision:
+        import fnmatch
+        sc = s.scope
+        rules = []
+        if req.op not in sc.allowed_ops:
+            rules.append("PRIV-OP")
+        if req.resource and not any(fnmatch.fnmatch(req.resource, g) for g in sc.allowed_resources):
+            rules.append("PRIV-RES")
+        if req.destination and not any(fnmatch.fnmatch(req.destination, g)
+                                       for g in sc.allowed_destinations):
+            rules.append("PRIV-DEST")
+        return Decision(req.action_id, Verdict.BLOCK if rules else Verdict.ALLOW, 0.0, rules, [],
+                        "privilege rules from task grants", "block" if rules else "allow",
+                        replace(s.caps))
+
+
+class TaskAlignmentEngine:
+    """Stand-in for the IDEA behind The Task Shield (Jia et al., 2024): an action is allowed only if it
+    serves the user's stated task.
+
+    NOT The Task Shield: that system asks a language model whether an action contributes to the task.
+    This deterministic version allows a call only if its operation is implied by the task text and every
+    file or destination it touches is named in the task text. It ignores grants, sensitivity, content and
+    session history, and never asks a human (allow or block only).
+    """
+
+    def evaluate(self, req: ActionRequest, s: Session) -> Decision:
+        from intentguard.engine import _mentioned
+        sc = s.scope
+        rules = []
+        if req.op not in sc.allowed_ops:
+            rules.append("ALIGN-OP")
+        for target in (req.resource, req.destination):
+            if target and not _mentioned(target, sc.task_text):
+                rules.append("ALIGN-TARGET")
+                break
+        return Decision(req.action_id, Verdict.BLOCK if rules else Verdict.ALLOW, 0.0, rules, [],
+                        "task alignment check", "block" if rules else "allow", replace(s.caps))
+
+
 class LlamaFirewallEngine:
     """Meta LlamaFirewall 1.0.3, local scanners only (REGEX + HIDDEN_ASCII).
 
@@ -145,6 +195,8 @@ SYSTEMS = {
     "unprotected": AllowAllEngine,
     "static_rbac": StaticPermissionEngine,
     "keyword_guardrail_standin": KeywordGuardrailEngine,
+    "privilege_rules_standin": PrivilegeRulesEngine,
+    "task_alignment_standin": TaskAlignmentEngine,
     "intentguard_full": lambda: PolicyEngine(EngineConfig()),
     "ablate_no_mention_check": lambda: PolicyEngine(EngineConfig(mention_check=False)),
     "ablate_no_cross_session": lambda: PolicyEngine(EngineConfig(cross_session=False)),
