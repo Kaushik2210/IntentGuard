@@ -65,6 +65,8 @@ literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the das
 
 ## Showcase site
 
+**Live: https://kaushik2210.github.io/IntentGuard/**
+
 `web/` is a Next.js (App Router, static export) site that shows the prototype: a 3D steel-and-glass gate (three.js) that real engine
 decisions fly through, a replay console that lights up which of the six checks fired, a compose box to try to smuggle a secret past the
 lineage check (a tested TypeScript port of that one rule), a risk gauge with the capabilities that switch off, an audit ledger you can
