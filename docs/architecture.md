@@ -93,3 +93,17 @@ M0 scaffold and threat model, M1 mock tools plus gateway passthrough plus bypass
 4. **LLM:** which model may the optional intent parser and the LangGraph demo agent use, and is a paid API acceptable? The core works with none.
 5. **Publication:** target venue or journal and the supervisor's deadline, so the benchmark size and AgentDojo scope fit the timeline.
 6. **License:** Apache-2.0 assumed; confirm.
+
+## 7. Where the code stands now (additions since the milestones above)
+
+| Module | What it adds |
+|---|---|
+| `store.py` | SQLite persistence of sessions, per-agent memory and lineage; lineage hashes are keyed with `<db>.key` (F28, F30) |
+| `sdk.py` | `Guard`: decorate your own Python functions, open a session per task, give the agent only the session |
+| `report.py` | `intentguard report`: readable per-session summary of an audit log, non-zero exit if the chain is broken |
+| `mcp_gateway.py` | MCP over stdio or Streamable HTTP (`--http-port`, origin and bearer-token checks), demo and proxy modes, approval channel |
+| `engine.py` lineage | 12-character fingerprints plus large numbers (digits, `120k`, words) and leetspeak readings (F17, F29) |
+| `bench/baselines.py` | unprotected, RBAC, keyword, LlamaFirewall, Prompt Guard 2 and stand-ins for Progent and The Task Shield (F27) |
+
+Not persisted by design: actions waiting for a human, the recent outbound text buffer, and the dashboard event list.
+
