@@ -52,7 +52,7 @@ and a reviewed lock-out (see F25 and F26).
 
 Not done: an independent (non-author) episode set, LlamaFirewall AlignmentCheck (needs an external LLM),
 comparison runs of the real Progent, The Task Shield or CaMeL (only stand-ins for the first two, F27), verified network-level isolation (Docker draft untested), OPA backend,
-Postgres/Redis, MCP resources/prompts/SSE streaming. Known open weaknesses: paraphrased or substituted
+Postgres/Redis, MCP resources/prompts/SSE streaming. Known open weaknesses: paraphrased or substituted (numbers and leetspeak are now matched, F29; reworded facts are not)
 exfiltration, split secrets whose first piece is short, review friction on legitimate tasks, and a session that
 is locked out after one blocked attempt (F16 to F18, F24 to F26).
 
@@ -61,7 +61,7 @@ an author, and several weaknesses are documented there (F2, F5 to F26). `python 
 the results; run it with `.venv-lf/Scripts/python` (Hugging Face access to Llama Prompt Guard 2 needed) to
 include the LlamaFirewall rows. `docs/literature-review.md` and the spreadsheets next to it hold the
 literature survey; `docs/mcp-demo.md` walks through the MCP gateway with the dashboard. Tests:
-`python -m pytest -q` (139 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
+`python -m pytest -q` (155 passing locally; the LangChain tests skip in a clean `.[dev]` environment).
 
 ## Guard your own Python functions
 

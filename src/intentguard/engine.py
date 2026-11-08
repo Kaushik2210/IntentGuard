@@ -77,6 +77,7 @@ class EngineConfig:
     mention_check: bool = True  # CONFIDENTIAL+ reads must be referenced by the task text
     lineage: bool = True  # outbound content that contains sensitive data read in this session
     lineage_k: int = 12  # shortest run of letters/digits that counts as a match
+    lineage_variants: bool = True  # also match sensitive numbers (digits, 120k, in words) and leetspeak
     approval_memory: bool = True  # a human approval of one recipient or file is remembered for the session
     action_risk_cap: float | None = None  # most risk one action can add; None = the sum of every rule it trips
     lockout_review: bool = False  # capability locks and the quarantine threshold send an action to a human, not a freeze
@@ -136,10 +137,68 @@ def _grams(text: str, k: int) -> frozenset[int]:
     return frozenset(_fp(t[i:i + k]) for i in range(len(t) - k + 1))
 
 
-def _overlaps(views: list[str], grams: frozenset[int], k: int) -> bool:
+_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if w != "_"}
+_SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000, "billion": 1_000_000_000}
+MIN_NUMBER = 10_000  # smaller numbers (years, counts, small prices) are too common to mean anything
+
+
+def _numbers(text: str) -> set[int]:
+    """Whole numbers of at least MIN_NUMBER written as digits (120000, 120,000), with a suffix (120k, 1.5m),
+    or in English words (one hundred and twenty thousand, ninety-eight thousand). Not handled: other
+    languages, fractions, approximations ("about a hundred grand"), or a number split across sentences."""
+    text = text[:20000].lower()
+    found: set[int] = set()
+    flat = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", text)
+    found.update(int(m) for m in re.findall(r"(?<![\d.])\d{5,}(?![\d.]*\d)", flat))
+    for num, suffix in re.findall(r"(?<![\w.])(\d+(?:\.\d+)?)\s?([km])\b", flat):
+        found.add(int(float(num) * (1000 if suffix == "k" else 1_000_000)))
+    for num, scale in re.findall(r"(?<![\w.])(\d+(?:\.\d+)?)\s(thousand|million|billion)\b", flat):
+        found.add(int(float(num) * _SCALES[scale]))
+    total = current = 0
+    started = False
+    for w in re.findall(r"[a-z]+", text.replace("-", " ")) + [""]:
+        if w in _UNITS or w in _TENS or w in _SCALES:
+            started = True
+            if w in _UNITS:
+                current += _UNITS[w]
+            elif w in _TENS:
+                current += _TENS[w]
+            elif w == "hundred":
+                current = max(current, 1) * 100
+            else:
+                total += max(current, 1) * _SCALES[w]
+                current = 0
+        elif w == "and" and started:
+            continue
+        else:
+            if started and total + current >= MIN_NUMBER:
+                found.add(total + current)
+            total = current = 0
+            started = False
+    return found
+
+
+_LEET = str.maketrans({"4": "a", "3": "e", "5": "s", "7": "t", "@": "a", "$": "s"})
+
+
+def _leet(text: str) -> list[str]:
+    """Plain-letter readings of leetspeak: digits and symbols swapped for the letters they imitate. Zero and one
+    are ambiguous (0/o, 1/i/l), so each reading is tried both ways."""
+    if not re.search(r"[43571@$0]", text):
+        return []
+    base = text.translate(_LEET)
+    return [base.replace("1", one).replace("0", zero) for one in ("i", "l", "1") for zero in ("o", "0")]
+
+
+def _overlaps(views: list[str], grams: frozenset[int], k: int, numbers: bool = False) -> bool:
     for v in views:
         n = _norm(v)
         if any(_fp(n[i:i + k]) in grams for i in range(len(n) - k + 1)):
+            return True
+        if numbers and any(_fp(f"#{x}") in grams for x in _numbers(v)):
             return True
     return False
 
@@ -181,6 +240,8 @@ class PolicyEngine:
         """Keep a fingerprint of sensitive data the session has read, to recognise it on the way out."""
         if self.cfg.lineage:
             grams = _grams(str(output), self.cfg.lineage_k)
+            if self.cfg.lineage_variants:  # "#" never survives _norm, so these cannot collide with text grams
+                grams |= {_fp(f"#{n}") for n in _numbers(str(output))}
             if grams:
                 s.lineage.append((cls, grams))
 
@@ -262,7 +323,9 @@ class PolicyEngine:
                 fire("TAINT-001", Verdict.BLOCK, 0.25, "secret pattern in outbound content")
             if cfg.lineage and s.lineage and req.trust != Trust.LOCAL:
                 views = _decodings(text) + _decodings(s.outbound)
-                hit = [c for c, g in s.lineage if _overlaps(views, g, cfg.lineage_k)]
+                if cfg.lineage_variants:
+                    views += [r for v in views for r in _leet(v)]
+                hit = [c for c, g in s.lineage if _overlaps(views, g, cfg.lineage_k, cfg.lineage_variants)]
                 if hit:  # credentials are blocked; other confidential data goes to a human
                     top = max(hit)
                     fire("TAINT-002", Verdict.BLOCK if top >= Classification.SECRET else Verdict.REVIEW, 0.3,

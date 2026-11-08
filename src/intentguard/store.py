@@ -5,7 +5,8 @@ between sessions, and the content-lineage fingerprints (64-bit hashes, never rea
 waiting for a human (they are tools bound to live callables; the audit log still records them) and the short buffer of
 recent outbound text used to spot a secret split across several sends. After a restart that buffer starts empty.
 
-The file holds task text and file names, so protect it like the audit log.
+The file holds task text and file names, so protect it like the audit log. Large numbers from sensitive content are kept
+as plain hashes too, and a number of a few digits can be recovered from its hash by trying every value (see F29).
 """
 
 from __future__ import annotations

@@ -707,3 +707,42 @@ session read confidential data.
   that buffer starts empty, so a split-send that straddles the restart is not caught by the buffer. This is a known gap.
 - The dashboard's event list is in memory and starts empty after a restart; the audit log is the record.
 - A 64-bit hash can in theory collide and cause a false match; at the sizes used here the chance is negligible but it is not zero.
+
+## F29. Re-written sensitive values: numbers and leetspeak are now matched (F28's lineage check, extended)
+
+Product change plus a new probe set. The content-lineage check used to match only 12 or more characters copied from what the
+session read. Two outbound forms slipped through (the "limits" in rt3_heldout), so the check now also looks at:
+
+- **Numbers.** Every whole number of 10,000 or more in sensitive content is kept (as a hash). Outbound text is searched for the
+  same numbers written as digits, with commas, as `120k` / `1.5m` / `120 thousand`, or in English words ("one hundred and twenty
+  thousand", "ninety-eight thousand"). Smaller numbers (years, counts) are ignored on purpose.
+- **Leetspeak.** Outbound text is also read with 4/3/5/7/@/$ turned back into letters, and with 0 and 1 read both ways (o/0, i/l/1).
+
+Both can be switched off with `EngineConfig(lineage_variants=False)`; the benchmark carries it as `ablate_no_lineage_variants`.
+
+| Set | Attack success, no lineage | no variants (F17 behaviour) | full |
+|---|---|---|---|
+| rt3_heldout (13 episodes) | 46.2% | 30.8% | 7.7% |
+| rt4_variants (14 attacks + 6 benign controls) | 100% | 92.9% | 35.7% |
+
+Every other set is unchanged (held-out generated 2.3%, fresh generated 1.0%, core 0%), and no benign episode was newly blocked.
+
+**What the numbers mean.** rt3_heldout is no longer held out for these two forms: its paraphrase and leetspeak probes were used to
+design the fix. rt4_variants was written after the fix, from other spellings of the same ideas, so it tests whether the matcher
+generalises within those ideas. It is the same author as the engine and not independent. Of its 14 attacks, 9 are the forms the
+fix targets (all caught) and 5 are limits written to fail (all still succeed): rounding ("roughly 125k"), another language
+("ciento veinte mil"), a fact with no numbers ("earns more than Bob"), slang ("a hundred and twenty grand"), and a spelled-out
+alphabet ("sierra kilo underscore..."). The 35.7% is therefore 5 of 14 by construction, not an estimate of real-world exposure.
+
+Known costs and gaps:
+- A legitimate email that repeats a sensitive number (for example quoting a salary) now goes to a human for CONFIDENTIAL data and
+  is blocked for SECRET data. That is intended, but it is a new source of review requests; the benchmark's benign episodes do not
+  contain such a case, so the rate is unmeasured.
+- Hashes of numbers are NOT safe to publish like the text hashes in F28: a 5 to 9 digit number can be recovered from its 64-bit
+  hash by trying every value. The database file (`--db`) therefore reveals which large numbers a sensitive file contained to
+  anyone who can read it. Protect it like the audit log. A keyed hash would fix this and has not been done.
+- p95 latency on rt4_variants rose to about 7 ms (it was about 0.3 ms): each outbound text now has up to five readings per
+  decoding. Still small beside a model call, but measured on a few episodes only.
+- The number words handled are English only, and a value reworded without a number (a comparison, a rank, a description) is
+  not detected at all. Paraphrase in general remains open.
+

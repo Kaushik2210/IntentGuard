@@ -26,6 +26,7 @@ from .external import load_external  # noqa: E402
 from .generate import generate  # noqa: E402
 from .redteam2 import build_rt_dev, build_rt_heldout  # noqa: E402
 from .redteam3 import build_rt3_dev, build_rt3_heldout  # noqa: E402
+from .redteam4 import build_rt4  # noqa: E402
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -139,7 +140,7 @@ def main() -> None:
             ("gen_fresh_seed4242", generate(4242, 300)), ("adversarial", build_adv()),
             ("adversarial2", build_adv2()), ("injection_text", build_inj()), ("xsession_db", build_xs()),
             ("rt_dev", build_rt_dev()), ("rt_heldout", build_rt_heldout()),
-            ("rt3_dev", build_rt3_dev()), ("rt3_heldout", build_rt3_heldout())]
+            ("rt3_dev", build_rt3_dev()), ("rt3_heldout", build_rt3_heldout()), ("rt4_variants", build_rt4())]
     external = load_external()
     if external:  # independent episodes written by someone else, dropped in bench/external/
         sets.append(("external_independent", external))
